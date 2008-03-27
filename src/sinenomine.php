@@ -5,61 +5,114 @@
 
 
 # Class to deal with generic table editing; called 'sineNomine' which means 'without a name' in recognition of the generic use of this class
-class sinenomine
+
+# Extend the FrontController application, which provides setup and tabbing
+require_once ('frontControllerApplication-dev.php');
+class sinenomine extends frontControllerApplication
 {
-	# Define supported editing actions
-	var $actions = array (
-		'index' => 'View records',
-		'listing' => 'Quick listing of all records',
-		'record' => 'View a record',
-		'add' => 'Add a record',
-		'edit' => 'Edit a record',
-		'clone' => 'Clone a record',
-		'delete' => 'Delete a record'
-	);
-	
-	# Define settings defaults
-	var $defaults = array (
-		'database' => false,
-		'table' => false,
-		'baseUrl' => false,
-		'databaseUrlPart' => false,	// Whether to include the database in the URL *if* a database has been supplied in the settings
-		//'administratorEmail'	=> $_SERVER['SERVER_ADMIN'], /* Defined below */	// Who receives error notifications (or false if disable notifications)
-		'showBreadcrumbTrail'	 => true,
-		'excludeMetadataFields' => array ('Field', 'Collation', 'Default', 'Privileges'),
-		'commentsAsHeadings' => true,	// Whether to use comments as headings if there are any comments
-		'convertJoinsInView' => true,	// Whether to convert joins when viewing a table
-		'clonePrefillsSourceKey' => false,	// Whether cloning should prefill the source record's key
-		'displayErrorDebugging' => false,	// Whether to show error debug info on-screen
-		'highlightMainTable'	=> true,	// Whether to make bold a table whose name is the same as the database
-		'attributes' => array (),
-		'exclude' => array (),
-		'validation' => array (),
-		'deny' => false,	// Deny edit access to database(s)/table(s)
-		'denyInformUser' => true,	// Whether to inform the user if a database/table is denied
-		'denyAdministratorOverride' => true,	// Whether to allow administrators access to denied database(s)/table(s)
-		'userIsAdministrator' => false,	// Whether the user is an administrator
-		'includeOnly' => array (),
-		'nullText' => '',	// ultimateForm defaults
-		'cols' => 60,		// ultimateForm defaults
-		'rows' => 4,		// ultimateForm defaults
-		'lookupFunctionParameters' => array (),
-		'refreshSeconds' => 0,	// Refresh time in seconds after editing an article
-	);
-	
 	# Class variables
 	var $database = NULL;
 	var $table = NULL;
 	var $record = NULL;
-	var $databaseConnection = NULL;
+	
+	
+	# Function assign additional actions
+	function actions ()
+	{
+		# Specify additional actions
+		$actions = array (
+			'index' => array (
+				'description' => 'View records',
+				'url' => '',
+			),
+			'listing' => array (
+				'description' => 'Quick listing of all records',
+				'url' => '',
+			),
+			'record' => array (
+				'description' => 'View a record',
+				'url' => '',
+			),
+			'add' => array (
+				'description' => 'Add a record',
+				'url' => '',
+			),
+			'edit' => array (
+				'description' => 'Edit a record',
+				'url' => '',
+			),
+			'clone' => array (
+				'description' => 'Clone a record',
+				'url' => '',
+			),
+			'delete' => array (
+				'description' => 'Delete a record',
+				'url' => '',
+			),
+		);
+		
+		# Return the actions
+		return $actions;
+	}
+	
+	
+	# Function to assign defaults additional to the general application defaults
+	function defaults ()
+	{
+		# Specify available arguments as defaults or as NULL (to represent a required argument)
+		$defaults = array (
+			'internalAuth' => true,	// Whether to use internal logins
+			'database' => false,
+			'table' => false,
+			'baseUrl' => false,
+			'databaseUrlPart' => false,	// Whether to include the database in the URL *if* a database has been supplied in the settings
+			//'administratorEmail'	=> $_SERVER['SERVER_ADMIN'], /* Defined below */	// Who receives error notifications (or false if disable notifications)
+			'showBreadcrumbTrail'	 => true,
+			'excludeMetadataFields' => array ('Field', 'Collation', 'Default', 'Privileges'),
+			'commentsAsHeadings' => true,	// Whether to use comments as headings if there are any comments
+			'convertJoinsInView' => true,	// Whether to convert joins when viewing a table
+			'clonePrefillsSourceKey' => false,	// Whether cloning should prefill the source record's key
+			'displayErrorDebugging' => false,	// Whether to show error debug info on-screen
+			'highlightMainTable'	=> true,	// Whether to make bold a table whose name is the same as the database
+			'attributes' => array (),
+			'exclude' => array (),
+			'validation' => array (),
+			'deny' => false,	// Deny edit access to database(s)/table(s)
+			'denyInformUser' => true,	// Whether to inform the user if a database/table is denied
+			'denyAdministratorOverride' => true,	// Whether to allow administrators access to denied database(s)/table(s)
+			'userIsAdministrator' => false,	// Whether the user is an administrator
+			'includeOnly' => array (),
+			'nullText' => '',	// ultimateForm defaults
+			'cols' => 60,		// ultimateForm defaults
+			'rows' => 4,		// ultimateForm defaults
+			'lookupFunctionParameters' => array (),
+			'refreshSeconds' => 0,	// Refresh time in seconds after editing an article
+			'showViewLink' => false,	// Whether to show the redundant 'view' link in the record listings
+			'compressWhiteSpace' => true,	// Whether to compress whitespace between table cells in the HTML
+		);
+		
+		# Return the defaults
+		return $defaults;
+	}
 	
 	
 	# Constructor
-	function __construct ($databaseConnection = NULL, $settings = array ())
+	function main ($settings = array (), &$html = NULL, $databaseConnection = NULL)
 	{
-		# Start the HTML
-		$html  = '';
+		# Determine whether the HTML is shown directly
+		$showHtmlDirectly = ($html === NULL);
 		
+		# Start (or continue) the HTML
+		if (!$html) {$html  = '';}
+		
+		# Require authentication
+		if (!$this->user = $this->logininternal ()) {
+			if ($showHtmlDirectly) {echo $html;}
+			return false;
+		}
+		
+		
+/*
 		# Load required libraries
 		require_once ('application.php');
 		
@@ -77,7 +130,7 @@ class sinenomine
 		
 		# Determine if the user is an administrator
 		$this->userIsAdministrator = $this->settings['userIsAdministrator'];
-		
+*/		
 		# Ensure any deny list is an array
 		$this->settings['deny'] = application::ensureArray ($this->settings['deny']);
 		
@@ -86,51 +139,59 @@ class sinenomine
 			$this->settings['deny'] = false;
 		}
 		
-		#!# Connect to the database if no database connection has been supplied
-		
-		
-		# Make a cursory attempt to ensure there is a database connection
-		if (!$databaseConnection->connection) {
-			$html .= $this->error ('No valid database connection was supplied.');
-		} else {
+		# Attempt to use the supplied connection if supplied (it will otherwise be taken from the FrontController)
+		if (!is_null ($databaseConnection)) {
 			
-			# Make the database connection available
-			$this->databaseConnection = $databaseConnection;
-			
-			# Provide encoded versions of particular class variables for use in pages
-			$this->hostnameEntities = htmlspecialchars ($this->databaseConnection->hostname);
-			
-			# Set up the environment and take action, caching the HTML
-			$actionHtml = $this->main ();
-			
-			# Build the HTML
-			$html .= $this->breadcrumbTrail ();
-			$html .= $actionHtml;
+			# Make a cursory attempt to ensure there is a database connection
+			if (!$databaseConnection->connection) {
+				$html .= $this->error ('No valid database connection was supplied.');
+			} else {
+				
+				# Make the database connection available, replacing anything that might have been supplied by the FrontController
+				$this->databaseConnection = $databaseConnection;
+			}
 		}
+		
+		# Provide encoded versions of particular class variables for use in pages
+		$this->hostnameEntities = htmlspecialchars ($this->databaseConnection->hostname);
+		
+		# Set up the environment and take action, caching the HTML
+		$actionHtml = $this->run ();
+		
+		# Build the HTML
+		$html .= $this->breadcrumbTrail ();
+		$html .= $actionHtml;
 		
 		# Show the HTML
 		#!# Add ability to return instead
-		echo $html;
+		if ($showHtmlDirectly) {echo $html;}
+		
+		# Notional return value (HTML is passed by reference)
+		return true;
 	}
 	
 	
 	# Function to set up the environment and take action
-	function main ()
+	function run ()
 	{
 		# Start the HTML
 		$html  = '';
 		
+		/*
 		# Determine the action to take, using the default (index) if none supplied
 		if (!$this->action = (!isSet ($_GET['do']) ? 'index' : (array_key_exists ($_GET['do'], $this->actions) ? $_GET['do'] : false))) {
 			$html .= "\n<p>No valid action was specified.</p>";
 			return $html;
 		}
+		*/
 		
-		# Determine whether links should include the database URL part
-		$this->includeDatabaseUrlPart = ($this->settings['database'] && $this->settings['databaseUrlPart']);
-		
+		/*
 		# Show title
 		$html = "\n<h2>" . htmlspecialchars ($this->actions[$this->action]) . '</h2>';
+		*/
+		
+		# Determine whether links should include the database URL part
+		$this->includeDatabaseUrlPart = (!$this->settings['database'] || ($this->settings['database'] && $this->settings['databaseUrlPart']));
 		
 		# Get the available databases
 		$this->databases = $this->databaseConnection->getDatabases ();
@@ -184,7 +245,7 @@ class sinenomine
 		$this->databaseEntities = htmlspecialchars ($this->database);
 		
 		# Get the available tables for this database
-		$this->tables = $this->databaseConnection->getTables ($this->settings['database']);
+		$this->tables = $this->databaseConnection->getTables ($this->database);
 		
 		# Make a list of denied tables in this database and remove them from the list of available tables
 		$deniedTables = array ();
@@ -212,7 +273,7 @@ class sinenomine
 		# Ensure a table is supplied
 		if (!$this->settings['table'] && !isSet ($_GET['table'])) {
 			$html .= "\n<p>Please select a table:</p>";
-			$html .= $this->linklist ($this->tables, $this->databaseLink, ($this->settings['highlightMainTable'] ? $this->database : false));
+			$html .= $this->linklist ($this->tables, $this->databaseLink, ($this->settings['highlightMainTable'] ? $this->database : false), $addAddLink = true);
 			return $html;
 		}
 		
@@ -297,7 +358,7 @@ class sinenomine
 		# Construct the list of items, avoiding linking to the current page
 		$items[] = "<a href=\"{$this->baseUrl}/\" title=\"Hostname\">{$this->hostnameEntities}</a>";
 		if ($this->database) {$items[] = (($this->action == 'index' && !$this->table) ? "<span title=\"Database\">{$this->databaseEntities}</span>" : $this->createLink ($this->database));}
-		if ($this->table) {$items[] = ($this->action == 'index' ? "<span title=\"Table\">{$this->tableEntities}</span>" : $this->createLink ($this->database, $this->table)) . ' <span class="comment"><em>(' . htmlspecialchars ($this->tableStatus['Comment']) . ')</em></span>';}
+		if ($this->table) {$items[] = ($this->action == 'index' ? "<span title=\"Table\">{$this->tableEntities}</span>" : $this->createLink ($this->database, $this->table)) . ($this->tableStatus['Comment'] ? ' <span class="comment"><em>(' . htmlspecialchars ($this->tableStatus['Comment']) . ')</em></span>' : '');}
 		if ($this->record) {$items[] = ($this->action == 'record' ? "<span title=\"Record\">{$this->recordEntities}</span>" : $this->createLink ($this->database, $this->table, $this->record));}
 		
 		# Compile the HTML
@@ -309,13 +370,17 @@ class sinenomine
 	
 	
 	# Function to create a list of links
-	function linklist ($data, $baseUrl = '', $highlightMainTable = false)
+	function linklist ($data, $baseUrl = '', $highlightMainTable = false, $addAddLink = false)
 	{
+		# Adjust the baseUrl for these links if it is empty, i.e. root
+		if ($baseUrl == '') {$baseUrl = '/';}
+		
 		# Create the links
 		$list = array ();
 		foreach ($data as $index => $item) {
 			$list[$index] = "<a href=\"{$baseUrl}" . rawurlencode ($item) . '/">' . htmlspecialchars ($item) . '</a>';
 			if ($highlightMainTable && ($item == $highlightMainTable)) {$list[$index] = "<strong>{$list[$index]}</strong>";}
+			if ($addAddLink) {$list[$index] .= " &nbsp;<a href=\"{$baseUrl}" . rawurlencode ($item) . '/add.html" title="Add new record">[+]</a>';}
 		}
 		
 		# Create the list
@@ -361,7 +426,8 @@ class sinenomine
 			#!# Ideally change 'Field' to 'Fieldname'
 			if ($commentsFound) {$metadataFields = array_merge (array ('Field'), $metadataFields);}
 			foreach ($metadataFields as $metadataField) {
-				$table[$metadataField] = array ($metadataField . ':', '', '', '', '',); // Placeholders against the starting Record/View/edit/clone/delete link headings
+				$table[$metadataField] = array ($metadataField . ':', '', '', '',); // Placeholders against the starting Record/View/edit/clone/delete link headings
+				if ($this->settings['showViewLink']) {$table[$metadataField][] = '';}
 				foreach ($this->fields as $fieldname => $attributes) {
 					
 					# Add the metadata to the table; may be adjusted below
@@ -388,8 +454,10 @@ class sinenomine
 		#!# Consider converting to using createLink, though the following is safely encoded
 		foreach ($data as $key => $attributes) {
 			$key = htmlspecialchars ($key);
-			$table[$key]['Record'] = '<strong>' . htmlspecialchars ($attributes[$this->key]) . '</strong>';
-			$table[$key]['View'] = "<a href=\"{$this->tableLink}" . urlencode ($key) . '/">View</a>';
+				$table[$key]['Record'] = '<strong>' . "<a href=\"{$this->tableLink}" . urlencode ($key) . '/">' . htmlspecialchars ($attributes[$this->key]) . '</a></strong>';
+			if ($this->settings['showViewLink']) {
+				$table[$key]['View'] = "<a href=\"{$this->tableLink}" . urlencode ($key) . '/">View</a>';
+			}
 			$actions = array ('edit', 'clone', 'delete');
 			foreach ($actions as $action) {
 				$table[$key][$action] = "<a href=\"{$this->tableLink}" . urlencode ($key) . "/{$action}.html\">" . ucfirst ($action) . '</a>';
@@ -413,13 +481,14 @@ class sinenomine
 		}
 		
 		# Compile the HTML
-		$html .= "\n<p>There " . ($total == 1 ? "is one record" : "are {$total} records") . ", as listed below. You can switch to " . ($fullView ? "<a href=\"{$this->tableLink}listing.html\">quick index</a> mode." : "<a href=\"{$this->tableLink}\">full-entry view</a> (default) mode.") . '</p>';
+		$totalFields = count ($this->fields);
+		$html .= "\n<p>This table, <a href=\"{$this->databaseLink}\">{$this->databaseEntities}</a>.{$this->tableEntities}, contains <strong>" . ($total == 1 ? 'one record' : "{$total} records") . '</strong> (each with ' . ($totalFields == 1 ? 'one field' : "{$totalFields} fields") . '), as listed below. You can switch to ' . ($fullView ? "<a href=\"{$this->tableLink}listing.html\">quick index</a> mode." : "<a href=\"{$this->tableLink}\">full-entry view</a> (default) mode.") . '</p>';
 		$html .= "\n<p>You can also <a href=\"{$this->tableLink}add.html\">add a record</a>.</p>";
 		#!# Enable sortability
 		// $html .= "\n" . '<!-- Enable table sortability: --><script language="javascript" type="text/javascript" src="http://www.geog.cam.ac.uk/sitetech/sorttable.js"></script>';
 		#!# Add line highlighting, perhaps using js
 		#!# Consider option to compress output using str_replace ("\n\t\t", "", $html) for big tables
-		$html .= application::htmlTable ($table, $this->headings, ($fullView ? 'sinenomine' : 'lines'), false, true, true, false, $addCellClasses = false, $addRowKeys = true);
+		$html .= application::htmlTable ($table, $this->headings, ($fullView ? 'sinenomine' : 'lines'), false, false, true, false, $addCellClasses = false, $addRowKeys = true, array (), $this->settings['compressWhiteSpace']);
 		
 		# Show the table
 		return $html;
@@ -511,7 +580,7 @@ class sinenomine
 			$keyAttributes['values'] = array (1 => '(Automatically assigned)');	// The value '1' is used to ensure it always validates, whatever the field specification is
 		}
 		
-		# If cloning, NULL the the key value if required
+		# If cloning, NULL out the key value if required
 		if ($action == 'clone' && !$this->settings['clonePrefillsSourceKey']) {
 			$data[$this->key] = NULL;
 		}
@@ -535,6 +604,7 @@ class sinenomine
 			'nullText' => $this->settings['nullText'],
 			'cols' => $this->settings['cols'],
 			'rows' => $this->settings['rows'],
+			'div' => 'graybox lines',
 		));
 		$form->dataBinding (array (
 			'database' => $this->database,
