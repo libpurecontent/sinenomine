@@ -1,5 +1,8 @@
 <?php
 
+#!# Joins to empty tables seem to revert to a standard input field rather than an empty SELECT list
+
+
 
 # Class to deal with generic table editing; called 'sineNomine' which means 'without a name' in recognition of the generic use of this class
 class sinenomine
@@ -21,16 +24,34 @@ class sinenomine
 		'table' => false,
 		'baseUrl' => false,
 		'databaseUrlPart' => false,	// Whether to include the database in the URL *if* a database has been supplied in the settings
+		//'administratorEmail'	=> $_SERVER['SERVER_ADMIN'], /* Defined below */	// Who receives error notifications (or false if disable notifications)
 		'showBreadcrumbTrail'	 => true,
 		'excludeMetadataFields' => array ('Field', 'Collation', 'Default', 'Privileges'),
 		'commentsAsHeadings' => true,	// Whether to use comments as headings if there are any comments
-		'nullText' => '',
+		'convertJoinsInView' => true,	// Whether to convert joins when viewing a table
+		'clonePrefillsSourceKey' => false,	// Whether cloning should prefill the source record's key
+		'displayErrorDebugging' => false,	// Whether to show error debug info on-screen
+		'highlightMainTable'	=> true,	// Whether to make bold a table whose name is the same as the database
+		'attributes' => array (),
+		'exclude' => array (),
+		'validation' => array (),
+		'deny' => false,	// Deny edit access to database(s)/table(s)
+		'denyInformUser' => true,	// Whether to inform the user if a database/table is denied
+		'denyAdministratorOverride' => true,	// Whether to allow administrators access to denied database(s)/table(s)
+		'userIsAdministrator' => false,	// Whether the user is an administrator
+		'includeOnly' => array (),
+		'nullText' => '',	// ultimateForm defaults
+		'cols' => 60,		// ultimateForm defaults
+		'rows' => 4,		// ultimateForm defaults
+		'lookupFunctionParameters' => array (),
+		'refreshSeconds' => 0,	// Refresh time in seconds after editing an article
 	);
 	
 	# Class variables
 	var $database = NULL;
 	var $table = NULL;
 	var $record = NULL;
+	var $databaseConnection = NULL;
 	
 	
 	# Constructor
@@ -42,6 +63,10 @@ class sinenomine
 		# Load required libraries
 		require_once ('application.php');
 		
+		# Add additional defaults
+		$this->defaults['administratorEmail'] = $_SERVER['SERVER_ADMIN'];
+		$this->defaults['application'] = __CLASS__;
+		
 		# Merge in the arguments; note that $errors returns the errors by reference and not as a result from the method
 		if (!$this->settings = application::assignArguments ($errors, $settings, $this->defaults, __CLASS__, NULL, $handleErrors = true)) {
 			return false;
@@ -50,16 +75,30 @@ class sinenomine
 		# Assign the base URL
 		$this->baseUrl = ($this->settings['baseUrl'] ? $this->settings['baseUrl'] : application::getBaseUrl ());
 		
+		# Determine if the user is an administrator
+		$this->userIsAdministrator = $this->settings['userIsAdministrator'];
+		
+		# Ensure any deny list is an array
+		$this->settings['deny'] = application::ensureArray ($this->settings['deny']);
+		
+		# Remove the deny list if the user has suitable privileges
+		if ($this->userIsAdministrator && $this->settings['denyAdministratorOverride']) {
+			$this->settings['deny'] = false;
+		}
+		
+		#!# Connect to the database if no database connection has been supplied
+		
+		
 		# Make a cursory attempt to ensure there is a database connection
 		if (!$databaseConnection->connection) {
-			$html .= "\n<p>No valid database connection was supplied.</p>";
+			$html .= $this->error ('No valid database connection was supplied.');
 		} else {
 			
 			# Make the database connection available
 			$this->databaseConnection = $databaseConnection;
 			
 			# Provide encoded versions of particular class variables for use in pages
-			$this->hostnameEntities = htmlentities ($this->databaseConnection->hostname);
+			$this->hostnameEntities = htmlspecialchars ($this->databaseConnection->hostname);
 			
 			# Set up the environment and take action, caching the HTML
 			$actionHtml = $this->main ();
@@ -87,107 +126,158 @@ class sinenomine
 			return $html;
 		}
 		
+		# Determine whether links should include the database URL part
+		$this->includeDatabaseUrlPart = ($this->settings['database'] && $this->settings['databaseUrlPart']);
+		
 		# Show title
-		$html = "\n<h2>" . htmlentities ($this->actions[$this->action]) . '</h2>';
+		$html = "\n<h2>" . htmlspecialchars ($this->actions[$this->action]) . '</h2>';
 		
 		# Get the available databases
-		if (!$databases = $this->databaseConnection->getDatabases ()) {
-			$html .= "\n<p>There are no databases in the system, so this editor cannot be used.</p>";
+		$this->databases = $this->databaseConnection->getDatabases ();
+		
+		# Make a list of denied databases and remove them from the list of available databases
+		$deniedDatabases = array ();
+		if ($this->settings['deny'] && is_array ($this->settings['deny'])) {
+			foreach ($this->settings['deny'] as $deniedDatabase) {
+				if (!is_array ($deniedDatabase)) {
+					$deniedDatabases[] = $deniedDatabase;
+				}
+			}
+			if ($deniedDatabases) {
+				$this->databases = array_diff ($this->databases, $deniedDatabases);
+			}
+		}
+		
+		# End if no editable databases
+		if (!$this->databases) {
+			$html .= "\n<p>There are no databases" . (($this->settings['denyInformUser'] && $deniedDatabases) ? ' that you can edit' : '') . " in the system, so this editor cannot be used.</p>";
 			return $html;
 		}
 		
 		# Ensure a database is supplied
 		if (!$this->settings['database'] && !isSet ($_GET['database'])) {
-			$html .= "\n<p>No database has been selected. Please select one:</p>";
-			$html .= $this->linklist ($databases, $this->baseUrl);
+			$html .= "\n<p>Please select a database:</p>";
+			$html .= $this->linklist ($this->databases, $this->baseUrl);
 			return $html;
 		}
 		
 		# Allocate the database, preferring settings over user-supplied data
 		$this->database = ($this->settings['database'] ? $this->settings['database'] : $_GET['database']);
 		
+		# Tell the user if the current database is denied
+		if ($this->settings['denyInformUser'] && in_array ($this->database, $deniedDatabases)) {
+			$html .= "\n<p>Access to the database <em>" . htmlspecialchars ($this->database) . '</em> has been denied by the administrator.</p>';
+			$this->database = NULL;
+			return $html;
+		}
+		
 		# Ensure the database exists
-		if (!in_array ($this->database, $databases)) {
+		if (!in_array ($this->database, $this->databases)) {
+			$this->database = NULL;
 			$html .= "\n<p>There is no such database. Please select one:</p>";
-			$html .= $this->linklist ($databases, $this->baseUrl);
+			$html .= $this->linklist ($this->databases, $this->baseUrl);
 			return $html;
 		}
 		
 		# Provide encoded versions of the database class variable for use in links
 		$this->databaseEncoded = rawurlencode ($this->database);
-		$this->databaseEntities = htmlentities ($this->database);
+		$this->databaseEntities = htmlspecialchars ($this->database);
 		
 		# Get the available tables for this database
-		if (!$tables = $this->databaseConnection->getTables ($this->settings['database'])) {
-			$html .= "\n<p>There are no tables in this database.</p>";
+		$this->tables = $this->databaseConnection->getTables ($this->settings['database']);
+		
+		# Make a list of denied tables in this database and remove them from the list of available tables
+		$deniedTables = array ();
+		if ($this->settings['deny'] && is_array ($this->settings['deny']) && isSet ($this->settings['deny'][$this->database]) && $this->settings['deny'][$this->database]) {
+			$this->settings['deny'][$this->database] = application::ensureArray ($this->settings['deny'][$this->database]);
+			foreach ($this->settings['deny'][$this->database] as $deniedTable) {
+				if (!is_array ($deniedTable)) {
+					$deniedTables[] = $deniedTable;
+				}
+			}
+			if ($deniedTables) {
+				$this->tables = array_diff ($this->tables, $deniedTables);
+			}
+		}
+		
+		# Get the available tables for this database
+		if (!$this->tables) {
+			$html .= "\n<p>There are no tables" . (($this->settings['denyInformUser'] && $deniedTables) ? ' that you can edit' : '') . " in this database.</p>";
 			return $html;
 		}
 		
-		#!# Have some way here to remove unwanted tables
-		
-		
 		# Determine a link to database level
-		$includeDatabaseUrlPart = ($this->settings['database'] && $this->settings['databaseUrlPart']);
-		$this->databaseLink = $this->baseUrl . ($includeDatabaseUrlPart ? "/{$this->databaseEncoded}" : '');
+		$this->databaseLink = $this->createLink ($this->database, NULL, NULL, false);
 		
 		# Ensure a table is supplied
 		if (!$this->settings['table'] && !isSet ($_GET['table'])) {
-			$html .= "\n<p>No table has been selected. Please select one:</p>";
-			$html .= $this->linklist ($tables, $this->databaseLink);
+			$html .= "\n<p>Please select a table:</p>";
+			$html .= $this->linklist ($this->tables, $this->databaseLink, ($this->settings['highlightMainTable'] ? $this->database : false));
 			return $html;
 		}
 		
 		# Allocate the table, preferring settings over user-supplied data
 		$this->table = ($this->settings['table'] ? $this->settings['table'] : $_GET['table']);
 		
+		# Tell the user if the current database is denied
+		if ($this->settings['denyInformUser'] && in_array ($this->table, $deniedTables)) {
+			$html .= "\n<p>Access to the table <em>" . htmlspecialchars ($this->table) . '</em> in the database <em>' . $this->createLink ($this->database) . '</em> has been denied by the administrator.</p>';
+			$this->table = NULL;
+			return $html;
+		}
+		
 		# Ensure the table exists
-		if (!in_array ($this->table, $tables)) {
+		if (!in_array ($this->table, $this->tables)) {
+			$this->table = NULL;
 			$html .= "\n<p>There is no such table. Please select one:</p>";
-			$html .= $this->linklist ($tables, $this->databaseLink);
+			$html .= $this->linklist ($this->tables, $this->databaseLink, ($this->settings['highlightMainTable'] ? $this->database : false));
 			return $html;
 		}
 		
 		# Provide encoded versions of the table class variable for use in links
 		$this->tableEncoded = rawurlencode ($this->table);
-		$this->tableEntities = htmlentities ($this->table);
+		$this->tableEntities = htmlspecialchars ($this->table);
 		
 		# Determine a link to table level
-		$this->tableLink = $this->databaseLink . "/{$this->tableEncoded}";
+		$this->tableLink = $this->createLink ($this->database, $this->table, NULL, false);
 		
 		# Get table status
 		$this->tableStatus = $this->databaseConnection->getTableStatus ($this->database, $this->table);
 		
 		# Get the fields for this table
 		if (!$this->fields = $this->databaseConnection->getFields ($this->database, $this->table)) {
-			$html .= "\n<p>There was some problem getting the fields for this table.</p>";
-			#!# Report to webmaster
-			return $html;
+			return $html .= $this->error ('There was some problem getting the fields for this table.');
 		}
+		
+		# Get the headings for the table (field comment names)
+		$this->headings = $this->databaseConnection->getHeadings ($this->database, $this->table, $this->fields, $useFieldnameIfEmpty = true, $this->settings['commentsAsHeadings']);
 		
 		# Get the unique field
 		if (!$this->key = $this->databaseConnection->getUniqueField ($this->database, $this->table, $this->fields)) {
-			$html .= "\n<p>This table appears not to have a unique key field.</p>";
-			#!# Report to webmaster
-			return $html;
+			return $html .= $this->error ('This table appears not to have a unique key field.');
 		}
 		
-		# Get record data if required
+		# Determine if the key is automatic (true/false, or NULL if no key)
+		$this->keyIsAutomatic = ($this->key ? ($this->fields[$this->key]['Extra'] == 'auto_increment') : NULL);
+		
+		# Get record data
 		$this->record = false;
-		$this->recordEncoded = false;
 		$this->recordEntities = false;
 		$this->recordLink = false;
 		$this->data = array ();
-		if (isSet ($_GET['record']) && $this->action != 'add') {
+		if (isSet ($_GET['record'])) {
+			#!# Still says 'view records' as the main title
 			if ($this->action == 'index') {$this->action = 'record';}
 			if (!$data = $this->databaseConnection->select ($this->database, $this->table, array ($this->key => $_GET['record']))) {
-				$html .= "\n<p>There is no such record. Did you intend to <a href=\"{$this->tableLink}/" . urlencode ($_GET['record']) . '/add.html">create a record with this key</a>?</p>';
-				return $html;
+				if ($this->action != 'add') {
+					$html .= "\n<p>There is no such record <em>" . htmlspecialchars ($_GET['record']) . "</em>. Did you intend to <a href=\"{$this->tableLink}" . urlencode ($_GET['record']) . '/add.html">create a new record' . ($this->keyIsAutomatic ? '' : ' with that key') . '</a>?</p>';
+					return $html;
+				}
 			} else {
 				$this->data = $data[$_GET['record']];	// Effectively do a 'getOne' using a select
 				$this->record = $_GET['record'];
-				$this->recordEncoded = rawurlencode ($_GET['record']);
-				$this->recordEntities = htmlentities ($_GET['record']);
-				$this->recordLink = $this->tableLink . "/{$this->recordEncoded}";
+				$this->recordEntities = htmlspecialchars ($this->record);
+				$this->recordLink = $this->createLink ($this->database, $this->table, $this->record, false);
 			}
 		}
 		
@@ -205,10 +295,10 @@ class sinenomine
 		if (!$this->settings['showBreadcrumbTrail']) {return false;}
 		
 		# Construct the list of items, avoiding linking to the current page
-		$items[] = "<a href=\"{$this->baseUrl}/\" title=\"hostname\">{$this->hostnameEntities}</a>";
-		if ($this->database) {$items[] = (($this->action == 'index' && !$this->table) ? "<span title=\"database\">{$this->databaseEntities}</span>" : "<a href=\"{$this->databaseLink}/\" title=\"database\">{$this->databaseEntities}</a>");}
-		if ($this->table) {$items[] = ($this->action == 'index' ? "<span title=\"table\">{$this->tableEntities}</span>" : "<a href=\"{$this->tableLink}/\" title=\"table\">{$this->tableEntities}</a>") . ' <span class="comment"><em>(' . htmlentities ($this->tableStatus['Comment']) . ')</em></span>';}
-		if ($this->record) {$items[] = ($this->action == 'record' ? "<span title=\"record\">{$this->recordEntities}</span>" : "<a href=\"{$this->recordLink}/\" title=\"record\">{$this->recordEntities}</a>");}
+		$items[] = "<a href=\"{$this->baseUrl}/\" title=\"Hostname\">{$this->hostnameEntities}</a>";
+		if ($this->database) {$items[] = (($this->action == 'index' && !$this->table) ? "<span title=\"Database\">{$this->databaseEntities}</span>" : $this->createLink ($this->database));}
+		if ($this->table) {$items[] = ($this->action == 'index' ? "<span title=\"Table\">{$this->tableEntities}</span>" : $this->createLink ($this->database, $this->table)) . ' <span class="comment"><em>(' . htmlspecialchars ($this->tableStatus['Comment']) . ')</em></span>';}
+		if ($this->record) {$items[] = ($this->action == 'record' ? "<span title=\"Record\">{$this->recordEntities}</span>" : $this->createLink ($this->database, $this->table, $this->record));}
 		
 		# Compile the HTML
 		$html = "\n\n<p>You are in: " . implode (' &raquo; ', $items) . '</p>';
@@ -219,12 +309,13 @@ class sinenomine
 	
 	
 	# Function to create a list of links
-	function linklist ($data, $baseUrl = '')
+	function linklist ($data, $baseUrl = '', $highlightMainTable = false)
 	{
 		# Create the links
 		$list = array ();
-		foreach ($data as $item) {
-			$list[] = "<a href=\"{$baseUrl}/" . rawurlencode ($item) . '/">' . htmlentities ($item) . '</a>';
+		foreach ($data as $index => $item) {
+			$list[$index] = "<a href=\"{$baseUrl}" . rawurlencode ($item) . '/">' . htmlspecialchars ($item) . '</a>';
+			if ($highlightMainTable && ($item == $highlightMainTable)) {$list[$index] = "<strong>{$list[$index]}</strong>";}
 		}
 		
 		# Create the list
@@ -244,7 +335,7 @@ class sinenomine
 		# Get the data
 		$query = 'SELECT ' . ($fullView ? '*' : $this->key) . " FROM `{$this->database}`.`{$this->table}` ORDER BY {$this->key};";
 		if (!$data = $this->databaseConnection->getData ($query, "{$this->database}.{$this->table}")) {
-			$html .= "\n<p>There are no records in the <em>{$this->tableEntities}</em> table. You can <a href=\"{$this->tableLink}/add.html\">add a record</a>.</p>";
+			$html .= "\n<p>There are no records in the <em>{$this->tableEntities}</em> table. You can <a href=\"{$this->tableLink}add.html\">add a record</a>.</p>";
 			return $html;
 		}
 		
@@ -254,15 +345,16 @@ class sinenomine
 		# Start a table, adding in metadata in full-view mode
 		$table = array ();
 		
-		# Flag whether there are any comments
-		$commentsFound = false;
-		foreach ($this->fields as $fieldname => $attributes) {
-			if ($attributes['Comment']) {$commentsFound = true;}
-		}
-		
 		# Get the metadata names by taking the attributes of a known field, taking out unwanted fieldnames
 		#!# Need to deal with clashing keys (the metadata fieldnames could be the same as real data); possible solution is not to allocate row keys but instead just use []
 		if ($fullView) {
+			
+			# Flag whether there are any comments
+			$commentsFound = false;
+			foreach ($this->fields as $fieldname => $attributes) {
+				if ($attributes['Comment']) {$commentsFound = true;}
+			}
+			
 			$metadataFields = array_keys ($this->fields[$this->key]);
 			#!# Ideally this would be done case-insensitively in case of user default-setting errors
 			$metadataFields = array_diff ($metadataFields, $this->settings['excludeMetadataFields']);
@@ -293,13 +385,14 @@ class sinenomine
 		}
 		
 		# Show the data, starting with the links
+		#!# Consider converting to using createLink, though the following is safely encoded
 		foreach ($data as $key => $attributes) {
-			$key = htmlentities ($key);
-			$table[$key]['Record'] = '<strong>' . htmlentities ($attributes[$this->key]) . '</strong>';
-			$table[$key]['View'] = "<a href=\"{$this->tableLink}/" . urlencode ($key) . '/">View</a>';
+			$key = htmlspecialchars ($key);
+			$table[$key]['Record'] = '<strong>' . htmlspecialchars ($attributes[$this->key]) . '</strong>';
+			$table[$key]['View'] = "<a href=\"{$this->tableLink}" . urlencode ($key) . '/">View</a>';
 			$actions = array ('edit', 'clone', 'delete');
 			foreach ($actions as $action) {
-				$table[$key][$action] = "<a href=\"{$this->tableLink}/" . urlencode ($key) . "/{$action}.html\">" . ucfirst ($action) . '</a>';
+				$table[$key][$action] = "<a href=\"{$this->tableLink}" . urlencode ($key) . "/{$action}.html\">" . ucfirst ($action) . '</a>';
 			}
 			
 			# Add all the data in full view mode
@@ -310,22 +403,23 @@ class sinenomine
 			}
 		}
 		
-		# Substitute the final headings with the text equivalents if there are comments
-		$headings = array ();
-		if ($fullView) {
-			foreach ($this->fields as $field => $attributes) {
-				$headings[$field] = (($this->settings['commentsAsHeadings'] && $commentsFound && !empty ($attributes['Comment'])) ? $attributes['Comment'] : $field);
+		# Convert fieldnames containing joins
+		$joinsFound = false;
+		foreach ($table['Field'] as $fieldname => $label) {
+			if ($join = $this->convertJoin ($label)) {
+				$table['Field'][$fieldname] = "<abbr title=\"{$label}\">{$join['field']}</abbr>&nbsp;&raquo;<br />" . $this->createLink ($join['database'], $join['table'], NULL, true, $asHtmlNewWindow = true, $asHtmlTableIncludesDatabase = true);
+				$joinsFound = true;
 			}
 		}
 		
 		# Compile the HTML
-		$html .= "\n<p>There " . ($total == 1 ? "is one record" : "are {$total} records") . ", as listed below. You can switch to " . ($fullView ? "<a href=\"{$this->tableLink}/listing.html\">quick index</a> mode." : "<a href=\"{$this->tableLink}/\">full-entry view</a> (default) mode.") . '</p>';
-		$html .= "\n<p>You can also <a href=\"{$this->tableLink}/add.html\">add a record</a>.</p>";
+		$html .= "\n<p>There " . ($total == 1 ? "is one record" : "are {$total} records") . ", as listed below. You can switch to " . ($fullView ? "<a href=\"{$this->tableLink}listing.html\">quick index</a> mode." : "<a href=\"{$this->tableLink}\">full-entry view</a> (default) mode.") . '</p>';
+		$html .= "\n<p>You can also <a href=\"{$this->tableLink}add.html\">add a record</a>.</p>";
 		#!# Enable sortability
 		// $html .= "\n" . '<!-- Enable table sortability: --><script language="javascript" type="text/javascript" src="http://www.geog.cam.ac.uk/sitetech/sorttable.js"></script>';
 		#!# Add line highlighting, perhaps using js
 		#!# Consider option to compress output using str_replace ("\n\t\t", "", $html) for big tables
-		$html .= application::htmlTable ($table, $headings, ($fullView ? 'sinenomine' : 'lines'), false, true, true, false, $addCellClasses = false, $addRowKeys = true);
+		$html .= application::htmlTable ($table, $this->headings, ($fullView ? 'sinenomine' : 'lines'), false, true, true, false, $addCellClasses = false, $addRowKeys = true);
 		
 		# Show the table
 		return $html;
@@ -340,21 +434,374 @@ class sinenomine
 	
 	
 	# Function to view a record
-	function record ()
+	function record ($embed = false)
 	{
+		# Start the HTML
+		$html  = '';
+		
+		# Do lookups
+		$data = ($this->settings['convertJoinsInView'] ? $this->convertJoinData ($this->data, $this->fields, $this->databaseConnection) : $this->data);
+		
 		# Create the HTML
-		$html = application::htmlTableKeyed ($this->data);
+		if (!$embed) {
+			$html .= "\n<p>The record <em>{$this->recordEntities}</em> in the table " . $this->createLink ($this->database, $this->table) . ' is as shown below.</p>';
+			$html .= "\n<p>You can <a href=\"{$this->recordLink}edit.html\">edit</a>, <a href=\"{$this->recordLink}clone.html\">clone</a> or <a href=\"{$this->recordLink}delete.html\">delete</a> this record.</p>";
+		}
+		$html .= application::htmlTableKeyed ($data, $this->headings);
 		
 		# Return the HTML
 		return $html;
 	}
 	
 	
-	# Wrapper function to provide the editing form
-	function recordForm (&$html, $data = array (), $exclude = array ())
+	# Function to add a record
+	function add ()
 	{
+		# Wrapper to editing a record but with the key taken out
+		return $this->recordManipulation (__FUNCTION__);
+	}
+	
+	
+	# Function to clone a record
+	function cloneRecord ()
+	{
+		# Wrapper to editing a record but with the key taken out
+		return $this->recordManipulation ('clone');
+	}
+	
+	
+	# Function to edit a record
+	function edit ()
+	{
+		# Edit the record
+		return $this->recordManipulation (__FUNCTION__);
+	}
+	
+	
+	# Function to do record manipulation
+	function recordManipulation ($action)
+	{
+		# Start the HTML
+		$html = '';
+		
+		#!# Lookup delete rights
+		
+		# Pre-fill the data
+		$data = $this->data;
+		
+		# Prevent addition of a new record whose key already exists
+		if ($action == 'add') {
+			if ($data) {
+				$html .= "<p>You cannot add a record <em>{$this->record}</em> as it already <a href=\"{$this->recordLink}\">exists</a>. You can <a href=\"{$this->recordLink}clone.html\">clone that record</a> or <a href=\"{$this->tableLink}add.html\">create a new record</a>.</p>";
+				return $html;
+			}
+			$data[$this->key] = (isSet ($_GET['record']) ? $_GET['record'] : '');
+		}
+		
+		# Set whether the key is editable
+		$keyAttributes['editable'] = (($action != 'edit') && !$this->keyIsAutomatic);
+		
+		# Deal with automatic keys (which will now be non-editable)
+		if (($action != 'edit') && $this->keyIsAutomatic) {
+			#!# The first four values are a workaround for just placing the text '(automatically assigned)'
+			$keyAttributes['type'] = 'select';
+			$keyAttributes['forceAssociative'] = true;
+			$keyAttributes['default'] = 1;
+			$keyAttributes['discard'] = true;
+			$keyAttributes['values'] = array (1 => '(Automatically assigned)');	// The value '1' is used to ensure it always validates, whatever the field specification is
+		}
+		
+		# If cloning, NULL the the key value if required
+		if ($action == 'clone' && !$this->settings['clonePrefillsSourceKey']) {
+			$data[$this->key] = NULL;
+		}
+		
+		# Determine the attributes
+		$attributes = $this->parseOverrides ($this->settings['attributes']);
+		$exclude = $this->parseOverrides ($this->settings['exclude']);
+		$includeOnly = $this->parseOverrides ($this->settings['includeOnly']);
+		$validation = $this->parseOverrides ($this->settings['validation']);
+		
+		# Merge in (override) the key handling
+		$attributes[$this->key] = $keyAttributes;
+		
 		# Load and create a form
-		require_once ('ultimateForm-dev.php');
+		require_once ('ultimateForm.php');
+		$form = new form (array (
+			'databaseConnection' => $this->databaseConnection,
+			'developmentEnvironment' => ini_get ('display_errors'),
+			'displayRestrictions' => false,
+			'formCompleteText' => false,
+			'nullText' => $this->settings['nullText'],
+			'cols' => $this->settings['cols'],
+			'rows' => $this->settings['rows'],
+		));
+		$form->dataBinding (array (
+			'database' => $this->database,
+			'table' => $this->table,
+			'data' => $data,
+			'lookupFunction' => array (__CLASS__, 'lookup'),
+			'lookupFunctionParameters' => $this->settings['lookupFunctionParameters'],
+			'lookupFunctionAppendTemplate' => "<a href=\"{$this->baseUrl}/" . ($this->includeDatabaseUrlPart ? '%database/' : '') . "%table/\" class=\"noarrow\" title=\"Click here to open a new window for editing these values; then click on refresh.\" target=\"_blank\"> ...</a>%refresh",
+			'includeOnly' => $includeOnly,
+			'exclude' => $exclude,
+			'attributes' => $attributes,
+		));
+		
+		# Add validation rules
+		#!# This is pretty nasty API stuff; perhaps allow a direct passing as $sinenomine->form->validation instead
+		if ($validation) {
+			foreach ($validation as $validationRule) {
+				$form->validation ($validationRule[0], $validationRule[1]);
+			}
+		}
+		
+		# Process the form
+		if (!$record = $form->process ($html)) {
+			return $html;
+		}
+		
+		#!# VERY TEMPORARY HACK to get uploading working by flattening the output; basically a special 'database' output format is needed at ultimateForm level
+		if ((isSet ($record['filename']) && isSet ($record['filename'][0]))) {$record['filename'] = $record['filename'][0];}
+		
+		#!# End here if no filename
+		
+		#!# Need to check that the unique key posted for a new record is not already in use; implement a new callback within the form
+		
+		# Update the record
+		$databaseAction = ($action == 'edit' ? 'update' : 'insert');
+		$parameterFour = ($databaseAction == 'update' ? array ($this->key => $this->record) : NULL);
+		if (!$result = $this->databaseConnection->$databaseAction ($this->database, $this->table, $record, $parameterFour)) {
+			return $html .= $this->error ();
+		}
+		
+		# Get the last insert ID of an insert
+		if ($databaseAction == 'insert') {
+			$this->record = $this->databaseConnection->getLatestId ();
+			$this->recordEntities = htmlspecialchars ($this->record);
+			$this->recordLink = $this->createLink ($this->database, $this->table, $this->record, false);
+		}
+		
+		# (Re-)fetch the data
+		$data = $this->databaseConnection->select ($this->database, $this->table, array ($this->key => $this->record));
+		$this->data = $data[$this->record];
+		
+		# Confirm success and show the record
+		$html .= "\n<p>The record <a href=\"{$this->recordLink}\">{$this->recordEntities}</a> has been " . ($action == 'edit' ? 'updated' : 'created') . " successfully.";
+		$html .= "\n<p>You can now <a href=\"{$this->recordLink}edit.html\">edit it further</a>, <a href=\"{$this->tableLink}\">list/view other records</a>, or <a href=\"{$this->tableLink}add.html\">add another record</a>.</p>";
+		$html .= "\n<p>The record" . ($action == 'edit' ? ' now' : '') . ' reads:</p>';
+		$html .= "\n\n" . $this->record ($embed = true);
+		#!# Replace this with the proper way of doing this
+		if ($this->settings['refreshSeconds']) {
+			$html .= "\n<meta http-equiv=\"refresh\" content=\"{$this->settings['refreshSeconds']};url={$this->tableLink}\">";
+		}
+		
+		# Return the HTML
+		return $html;
+	}
+	
+	
+	# Function to return the current record
+	function getRecord ()
+	{
+		# Return the value
+		return $this->record;
+	}
+	
+	
+	# Function to deal with database error handling
+	function error ($userErrorMessage = 'A database error occured.')
+	{
+		# Get the error message
+		$error = ($this->databaseConnection ? $this->databaseConnection->error () : 'No database connection available');
+		
+		# Construct an e-mail message
+		$message  = "A database error from {$this->settings['application']} » " . __CLASS__ . " occured.\nDebug details are:";
+		$message .= "\n\n\nUser error message:\n{$userErrorMessage}";
+		if ($this->databaseConnection) {
+			$message .= "\n\n" . ucfirst ($this->databaseConnection->vendor) . " error number:\n{$error[1]}";
+			$message .= "\n\nError text:\n{$error[2]}";
+			if ($error['query']) {$message .= "\n\nQuery:\n" . $error['query'];}
+		}
+		$message .= "\n\nURL:\n" . $_SERVER['_PAGE_URL'];
+		if ($_POST) {$message .= "\n\nData in \$_POST:\n" . print_r ($_POST, 1);}
+		
+		# Construct the on-screen error message
+		$html  = "\n<p class=\"warning\">{$userErrorMessage}</p>";
+		$html .= "\n<p>" . ($this->settings['administratorEmail'] ? 'This problem has been reported to' : 'Please report this problem to') . ' the Webmaster.</p>';
+		if ($this->settings['displayErrorDebugging']) {$html .= "\n\n<p>Debugging details:</p><div class=\"graybox\">\n<pre>" . wordwrap (htmlspecialchars ($message)) . '</pre></div>';}
+		
+		# Report to the webmaster by e-mail if required
+		if ($this->settings['administratorEmail']) {
+			application::sendAdministrativeAlert ($this->settings['administratorEmail'], $this->settings['application'], "Database error in {$this->settings['application']} » " . __CLASS__, $message);
+		}
+		
+		# Return the HTML
+		return $html;
+	}
+	
+	
+	# Function to parse dataBinding overrides
+	function parseOverrides ($setting)
+	{
+		# End if false or not an array
+		if (!$setting || !is_array ($setting)) {return false;}
+		
+		# Return the value (usually an array) if it's in the hierarchy
+		#!# Add wildcard support, i.e. '*' to represent any database or any table
+		if (isSet ($setting[$this->database]) && is_array ($setting[$this->database]) && isSet ($setting[$this->database][$this->table]) && is_array ($setting[$this->database][$this->table])) {
+			return $setting[$this->database][$this->table];
+		}
+		
+		# Otherwise return false
+		return false;
+	}
+	
+	
+	# Function to convert joins
+	function convertJoin ($fieldname)
+	{
+		# Return if matched
+		if (ereg ('^([a-zA-Z0-9]+)__JOIN__([a-zA-Z0-9]+)__([a-zA-Z0-9]+)__reserved$', $fieldname, $matches)) {
+			return array (
+				'field' => $matches[1],
+				'database' => $matches[2],
+				'table' => $matches[3],
+			);
+		}
+		
+		# Otherwise return false;
+		return false;
+	}
+	
+	
+	# Function to do referential integrity checks
+	function joinsTo ($database, $table, $record = false, $returnAsString = true)
+	{
+		# Start an array of joins
+		$joins = array ();
+		
+		# Start a cache of fields
+		$fieldsCache = array ();
+		
+		# Loop through each database table's fields
+		foreach ($this->databases as $database) {
+			$tables = $this->databaseConnection->getTables ($database);
+			foreach ($tables as $table) {
+				$fields = $this->databaseConnection->getFields ($database, $table);
+				foreach ($fields as $field => $attributes) {
+					
+					# If a join is found, add it to the list
+					if ($join = $this->convertJoin ($field)) {
+						if (($this->database == $join['database']) && ($this->table == $join['table'])) {
+							$joins[$database][$table][$field] = true;
+							
+							# Cache the fields
+							$fieldsCache[$database][$table] = $fields;
+						}
+					}
+				}
+			}
+		}
+		
+		# Get any records being joined
+		$joinedRecords = array ();
+		if ($joins) {
+			foreach ($joins as $database => $tables) {
+				foreach ($tables as $table => $fields) {
+					foreach ($fields as $field => $boolean) {
+						$uniqueField = $this->databaseConnection->getUniqueField ($database, $table, $fieldsCache[$database][$table]);	// Fields cache is used to avoid the fields being looked up again
+						if ($result = $this->databaseConnection->select ($database, $table, $conditions = array ($field => $record), $columns = array ($uniqueField), $associative = true, $orderBy = $uniqueField)) {
+							$joinedRecords[$database][$table] = array_keys ($result);
+						}
+					}
+				}
+			}
+		}
+		
+		# Return the joins as an array if required
+		if (!$returnAsString) {return $joinedRecords;}
+		
+		# Return an empty string if no records
+		if (!$joinedRecords) {return '';}
+		
+		# Loop through each database and table part of the hierarchical list of joins
+		foreach ($joinedRecords as $database => $tables) {
+			foreach ($tables as $table => $joins) {
+				
+				# Loop through each record part of the hierarchical list of joins
+				$links = array ();
+				foreach ($joins as $joinedRecord) {
+					$links[] = $this->createLink ($database, $table, $joinedRecord, true, $asHtmlNewWindow = true);
+				}
+				
+				# Compile the HTML
+				$tableLinks[] = 'In ' . $this->createLink ($database, $table, NULL, true, $asHtmlNewWindow = true, $asHtmlTableIncludesDatabase = true) . ': ' . ((count ($joins) == 1) ? 'record' : 'records') . ' ' . implode (', ', $links);
+			}
+		}
+		
+		# Compile the HTML
+		$html = "\n<p>You can't currently delete the record <em>" . $this->createLink ($this->database, $this->table, $record, true, $asHtmlNewWindow = false) . "</em>, because the following join to it:</p>" . application::htmlUl ($tableLinks);
+		
+		# Return the HTML
+		return $html;
+	}
+	
+	
+	# Function to create a link to a database/table/record
+	function createLink ($database, $table = NULL, $record = NULL, $asHtml = true, $asHtmlNewWindow = false, $asHtmlTableIncludesDatabase = false, $tooltips = true)
+	{
+		# Start with the base URL and the database URL if required
+		$link = $this->baseUrl . ($this->includeDatabaseUrlPart ? '/' . rawurlencode ($database) : '') . '/';
+		
+		# Define the text
+		$label = $database;
+		$tooltip = 'Database';
+		
+		# Add the table if required
+		if ($table) {
+			$link .= rawurlencode ($table) . '/';
+			$label = ($asHtmlTableIncludesDatabase ? "{$database}.{$table}" : $table);
+			$tooltip = ($asHtmlTableIncludesDatabase ? "Database &amp; table" : 'Table');
+		}
+		
+		# Add the record if required
+		if ($record) {
+			$link .= rawurlencode ($record) . '/';
+			$label = $record;
+			$tooltip = 'Record';
+		}
+		
+		# Compile as HTML if necessary
+		if ($asHtml) {
+			$labelEntities = htmlspecialchars ($label);
+			$title = array ();
+			if ($tooltips) {$title[] = $tooltip;}
+			if ($asHtmlNewWindow) {$title[] = '(Opens in a new window)';}
+			$link = "<a href=\"{$link}\"" . ($asHtmlNewWindow ? " target=\"_blank\"" : '') . ($title ? ' title="' . implode (' ', $title) . '"' : '') . ">{$labelEntities}</a>";
+		}
+		
+		# Return the link
+		return $link;
+	}
+	
+	
+	# Function to delete a record
+	function delete ()
+	{
+		# Start the HTML
+		$html = '';
+		
+		#!# Lookup delete rights
+		
+		# Do referential integrity checks; end if joins exist
+		if ($joins = $this->joinsTo ($this->database, $this->table, $this->record)) {
+			$html .= $joins;
+			return $html;
+		}
+		
+		# Load and create a form
+		require_once ('ultimateForm.php');
 		$form = new form (array (
 			'databaseConnection' => $this->databaseConnection,
 			'developmentEnvironment' => ini_get ('display_errors'),
@@ -363,101 +810,35 @@ class sinenomine
 			'nullText' => $this->settings['nullText'],
 		));
 		
-		# Determine if the key field should be editable
-		$keyIsEditable = (!$data || $this->action == 'cloneRecord');
-		#!# Deal with automatic key if adding or cloning a record
-/*
-		$keyIsAutomatic = ($this->fields[$this->key]['Extra'] == 'auto_increment');
-		$exclude = ($keyIsAutomatic ? array ($this->key) : array ());
-*/
-		
-		
-		
-		# Databind the form
-		$form->dataBinding (array (
-			'database' => $this->database,
-			'table' => $this->table,
-			'data' => $data,
-			'lookupFunction' => array (__CLASS__, 'lookup'),
-			#!# Make the key visible but non-editable if a way can be found
-			'exclude' => $exclude,
-			'attributes' => array (
-				$this->key => array ('editable' => $keyIsEditable),	// Deal with the key field
-//				$this->key => array ('editable' => !$keyIsAutomatic, 'required' => true, 'default' => ($keyIsAutomatic ? '(This is automatically assigned)' : '')),	// Deal with the key field
-			),
+		# Form text/widgets
+		$form->heading ('p', "Do you really want to delete record <em><a href=\"{$this->recordLink}\">{$this->recordEntities}</a></em>, whose data is shown below?");
+		$form->select (array (
+			'name'				=> 'confirmation',
+			'title'				=> 'Confirm deletion',
+			'required'			=> 1,
+			'forceAssociative'	=> true,
+			'values'			=> array ('No, do NOT delete the record', 'Yes, delete this record permanently'),
 		));
 		
+		# Show the record
+		$form->heading ('p', $this->record ($embed = true));
+		
 		# Process the form
-		return $result = $form->process ($html);
-	}
-	
-	
-	# Function to add a record
-	function add ()
-	{
-		# Start the HTML
-		$html = '';
-		
-		# If a record number has been supplied, pass that through
-		#!# Need to check that the ID being supplied is a valid type so that the form is actually submittable
-		$data = (isSet ($_GET['record']) ? array ($this->key => $_GET['record']) : array ());
-		
-		# Hand off to the record form
-		if (!$result = $this->recordForm ($html, $data)) {
+		if (!$result = $form->process ($html)) {
 			return $html;
 		}
 		
-		application::dumpData ($result);
-		
-		# Return the HTML
-		return $html;
-	}
-	
-	
-	# Function to edit a record
-	function edit ($clone = false)
-	{
-		# Start the HTML
-		$html = '';
-		
-		# If cloning, unset the key
-		$data = $this->data;
-		if ($clone) {
-			unset ($data[$this->key]);
-		}
-		
-		# Hand off to the record form, supplying the data
-		if (!$result = $this->recordForm ($html, $data)) {
+		# Confirm that the record has not been deleted.
+		if (!$result['confirmation']) {
+			$html .= "<p>The <a href=\"{$this->recordLink}\">record</a> has <strong>not</strong> been deleted.</p>";
 			return $html;
 		}
 		
-		application::dumpData ($result);
-		
-		# Return the HTML
-		return $html;
-	}
-	
-	
-	# Function to clone a record
-	function cloneRecord ()
-	{
-		# Wrapper to editing a record but with the key taken out
-		return $this->edit ($clone = true);
-	}
-	
-	
-	# Function to delete a record
-	function delete ()
-	{
-		# Create the HTML
-		$html  = "\n<p>Do you really want to delete record <em>{$this->recordEntities}</em>, whose data is shown below?</p>";
-		
-		// Webform here
-		
-		$html .= $this->view ();
-		
-		# Delete the record if wanted
-		
+		# Delete the record and confirm success
+		if (!$this->databaseConnection->delete ($this->database, $this->table, array ($this->key => $this->record))) {
+			return $html .= $this->error ();
+		}
+		$html .= "<p>The record <em>{$this->recordEntities}</em> in the table " . $this->createLink ($this->database, $this->table) . ' has been deleted.</p>';
 		
 		# Return the HTML
 		return $html;
@@ -465,37 +846,194 @@ class sinenomine
 	
 	
 	# Define a lookup function used for data binding
-	function lookup ($databaseConnection, $fieldName, $fieldType, $sort = true, $showKeys = NULL)
+	#!# Caching mechanism needed for repeated fields (and fieldnames as below), one level higher in the calling structure
+	function lookup ($databaseConnection, $fieldName, $fieldType, $showKeys = false, $orderby = false, $sort = true, $group = true)
 	{
 		# Determine if it's a special JOIN field
 		$values = array ();
+		$targetDatabase = NULL;
+		$targetTable = NULL;
 		if (eregi ('^([a-zA-Z0-9]+)__JOIN__([a-zA-Z0-9]+)__([a-zA-Z0-9]+)__reserved$', $fieldName, $matches)) {
 			
 			# Assign the new fieldname
 			$fieldName = $matches[1];
+			$targetDatabase = $matches[2];
+			$targetTable = $matches[3];
+			
+			# Get the fields of the target table
+			$fields = $databaseConnection->getFieldNames ($matches[2], $matches[3]);
+			
+			# Deal with ordering
+			$orderbySql = '';
+			if ($orderby) {
+				
+				# Get those fields in the orderby list that exist in the table being linked to
+				$orderby = application::ensureArray ($orderby);
+				$fieldsPresent = array_intersect ($orderby, $fields);
+				
+				# Compile the SQL
+				$orderbySql = ' ORDER BY ' . implode (',', $fieldsPresent);
+			}
 			
 			# Get the data
 			#!# Enable recursive lookups
-			#!# Enable ordering
-			$query = "SELECT * FROM {$matches[2]}.{$matches[3]};";
-			$allData = $databaseConnection->getData ($query, "{$matches[2]}.{$matches[3]}");
+			$query = "SELECT * FROM {$targetDatabase}.{$targetTable}{$orderbySql};";
+			if (!$data = $databaseConnection->getData ($query, "{$targetDatabase}.{$targetTable}")) {
+				return array ($fieldName, array (), $targetDatabase, $targetTable);
+			}
 			
-			# Show the keys if not a numeric fieldtype
-			$showKey = (!is_null ($showKeys) ? $showKeys : (!strstr ($fieldType, 'int(')));
+			# Sort
+			if ($sort) {ksort ($values);}
+			
+			# Show the keys if not a numeric fieldtype or if forced
+			$showKey = ($showKeys ? $showKeys : (!strstr ($fieldType, 'int(')));
+			
+			# Deal with grouping if required
+			$grouped = false;
+			if ($group) {
+				
+				# Determine the field to attempt to use, either a supplied fieldname or the second (first non-key) field. If the group 'name' supplied is a number, treat as an index (e.g. second key name)
+				$groupField = (($group === true || is_numeric ($group)) ? application::arrayKeyName ($data, (is_numeric ($group) ? $group : 2), true) : $group);
+				
+				# Confirm existence of that field
+				if ($groupField && in_array ($groupField, $fields)) {
+					
+					# Find if any group field values are unique; if so, regroup the whole dataset; if not, don't regroup
+					$groupValues = array ();
+					foreach ($data as $key => $rowData) {
+						$groupFieldValue = $rowData[$groupField];
+						if (!in_array ($groupFieldValue, $groupValues)) {
+							$groupValues[$key] = $groupFieldValue;
+						} else {
+							
+							# Regroup the data and flag this
+							$data = application::regroup ($data, $groupField, false);
+							$grouped = true;
+							break;
+						}
+					}
+				}
+			}
 			
 			# Convert the data into a single key/value pair, removing repetition of the key if required
-			foreach ($allData as $key => $data) {
-				#!# This assumes the key is the first ...
-				array_shift ($data);
-				$values[$key] = ($showKey ? "{$key}: " : '') . implode (' - ', array_values ($data));
+			if ($grouped) {
+				foreach ($data as $groupKey => $groupData) {
+					foreach ($groupData as $key => $rowData) {
+						#!# This assumes the key is the first ...
+						array_shift ($rowData);
+						/*
+						unset ($rowData[$groupField]);
+						if (application::allArrayElementsEmpty ($rowData)) {
+							array_unshift ($rowData, "{{$groupKey}}");
+						}
+						*/
+						$values[$groupKey][$key] = ($showKey ? "{$key}: " : '') . implode (' - ', array_values ($rowData));
+					}
+				}
+			} else {
+				foreach ($data as $key => $rowData) {
+					#!# This assumes the key is the first ...
+					array_shift ($rowData);
+					$values[$key] = ($showKey ? "{$key}: " : '') . implode (' - ', array_values ($rowData));
+				}
 			}
 		}
 		
-		# Sort
-		if ($sort) {ksort ($values);}
-		
 		# Return the field name and the lookup values
-		return array ($fieldName, $values);
+		return array ($fieldName, $values, $targetDatabase, $targetTable);
+	}
+	
+	
+	# Function to convert key numbers/names into the looked-up data
+	function convertJoinData ($data, $fields, $databaseConnection = false, $convertUrls = true, $showNumberFields = false)
+	{
+		# Get the database connection
+		if ($databaseConnection) {
+			$this->databaseConnection = $databaseConnection;
+		}
+		
+		# Do lookups
+		$uniqueFields = array ();
+		$lookupValues = array ();
+		foreach ($data as $fieldname => $value) {
+			
+			# Skip if no value
+			if (empty ($value)) {continue;}
+			
+			# Convert the join or skip if not a join
+			if (!$joins = self::convertJoin ($fieldname)) {continue;}
+			
+			# Get the unique field name for the target table, or skip if fails
+			if (!isSet ($uniqueFields[$joins['database']][$joins['table']])) {
+				if (!$uniqueField = $this->databaseConnection->getUniqueField ($joins['database'], $joins['table'])) {continue;}
+				$uniqueFields[$joins['database']][$joins['table']] = $uniqueField;
+			}
+			
+			# Lookup the data, or skip if fails
+			if (!isSet ($lookupValues[$joins['database']][$joins['table']][$value])) {
+				if (!$tempData = $this->databaseConnection->select ($joins['database'], $joins['table'], array ($uniqueFields[$joins['database']][$joins['table']] => $value), array (), false)) {continue;}
+				$lookupValues[$joins['database']][$joins['table']][$value] = $tempData[0];
+			}
+			
+			# Unset the key if numeric
+			if (is_numeric ($lookupValues[$joins['database']][$joins['table']][$value][$uniqueField])) {
+				unset ($lookupValues[$joins['database']][$joins['table']][$value][$uniqueField]);
+			}
+			
+			# Compile the data, showing either all fields in the joined data, or the first $showNumberFields fields
+			if (!$showNumberFields) {
+				$value = implode (' » ', $lookupValues[$joins['database']][$joins['table']][$value]);
+			} else {
+				$items = array ();
+				$i = 0;
+				foreach ($lookupValues[$joins['database']][$joins['table']][$value] as $key => $item) {
+					if ($i == $showNumberFields) {break;}
+					$items[] = $item;
+					$i++;
+				}
+				$value = implode (' » ', $items);
+			}
+			
+			# Put the new value into the data
+			$data[$fieldname] = $value;
+		}
+		
+		# Modify display
+		foreach ($data as $fieldname => $value) {
+			
+			# Convert timestamp fields to human-readable text
+			if (($fields[$fieldname]['Type'] == 'timestamp') || ($fields[$fieldname]['Type'] == 'datetime')) {
+				if ($value == '0000-00-00 00:00:00') {
+					$value = NULL;
+				} else {
+					require_once ('timedate.php');
+					$value = timedate::convertTimestamp ($value);
+				}
+			}
+			
+			# Make entity-safe
+//			# Make entity-safe if not a richtext field
+//			if ($fields[$fieldname]['Type'] != 'text') {
+				$value = htmlspecialchars ($value);
+//			}
+			
+			# Replace line breaks
+			#!# This should be disabled for richtext
+			$value = str_replace ("\n", "<br />\n", $value);
+			
+			# Convert URLs if required
+			#!# Bad smell: move this up the code chain
+			if ($convertUrls) {
+				require_once ('application.php');
+				$value = application::makeClickableLinks ($value, false, '[Link]');
+			}
+			
+			# Put the new value into the data
+			$data[$fieldname] = $value;
+		}
+		
+		# Return the data
+		return $data;
 	}
 }
 
