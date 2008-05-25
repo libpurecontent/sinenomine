@@ -6,113 +6,104 @@
 
 # Class to deal with generic table editing; called 'sineNomine' which means 'without a name' in recognition of the generic use of this class
 
-# Extend the FrontController application, which provides setup and tabbing
-require_once ('frontControllerApplication-dev.php');
-class sinenomine extends frontControllerApplication
+
+class sinenomine
 {
 	# Class variables
 	var $database = NULL;
 	var $table = NULL;
 	var $record = NULL;
+	var $databaseConnection = NULL;
 	
 	
-	# Function assign additional actions
-	function actions ()
-	{
-		# Specify additional actions
-		$actions = array (
-			'index' => array (
-				'description' => 'View records',
-				'url' => '',
-			),
-			'listing' => array (
-				'description' => 'Quick listing of all records',
-				'url' => '',
-			),
-			'record' => array (
-				'description' => 'View a record',
-				'url' => '',
-			),
-			'add' => array (
-				'description' => 'Add a record',
-				'url' => '',
-			),
-			'edit' => array (
-				'description' => 'Edit a record',
-				'url' => '',
-			),
-			'clone' => array (
-				'description' => 'Clone a record',
-				'url' => '',
-			),
-			'delete' => array (
-				'description' => 'Delete a record',
-				'url' => '',
-			),
-		);
-		
-		# Return the actions
-		return $actions;
-	}
+	# Specify available arguments as defaults or as NULL (to represent a required argument)
+	var $defaults = array (
+		'internalAuth' => true,	// Whether to use internal logins
+		'database' => false,
+		'table' => false,
+		'baseUrl' => false,
+		'databaseUrlPart' => false,	// Whether to include the database in the URL *if* a database has been supplied in the settings
+		//'administratorEmail'	=> $_SERVER['SERVER_ADMIN'], /* Defined below */	// Who receives error notifications (or false if disable notifications)
+		'showBreadcrumbTrail'	 => true,
+		'excludeMetadataFields' => array ('Field', 'Collation', 'Default', 'Privileges'),
+		'commentsAsHeadings' => true,	// Whether to use comments as headings if there are any comments
+		'convertJoinsInView' => true,	// Whether to convert joins when viewing a table
+		'clonePrefillsSourceKey' => false,	// Whether cloning should prefill the source record's key
+		'displayErrorDebugging' => false,	// Whether to show error debug info on-screen
+		'highlightMainTable'	=> true,	// Whether to make bold a table whose name is the same as the database
+		'attributes' => array (),
+		'exclude' => array (),
+		'validation' => array (),
+		'deny' => false,	// Deny edit access to database(s)/table(s)
+		'denyInformUser' => true,	// Whether to inform the user if a database/table is denied
+		'denyAdministratorOverride' => true,	// Whether to allow administrators access to denied database(s)/table(s)
+		'userIsAdministrator' => false,	// Whether the user is an administrator
+		'includeOnly' => array (),
+		'nullText' => '',	// ultimateForm defaults
+		'cols' => 60,		// ultimateForm defaults
+		'rows' => 4,		// ultimateForm defaults
+		'lookupFunctionParameters' => array (),
+		'refreshSeconds' => 0,	// Refresh time in seconds after editing an article
+		'showViewLink' => false,	// Whether to show the redundant 'view' link in the record listings
+		'compressWhiteSpace' => true,	// Whether to compress whitespace between table cells in the HTML
+	);
+	
+	
+	# Specify available actions
+	var $actions = array (
+		'index' => array (
+			'description' => 'View records',
+			'url' => '',
+		),
+		'listing' => array (
+			'description' => 'Quick listing of all records',
+			'url' => '',
+		),
+		'record' => array (
+			'description' => 'View a record',
+			'url' => '',
+		),
+		'add' => array (
+			'description' => 'Add a record',
+			'url' => '',
+		),
+		'edit' => array (
+			'description' => 'Edit a record',
+			'url' => '',
+		),
+		'clone' => array (
+			'description' => 'Clone a record',
+			'url' => '',
+		),
+		'delete' => array (
+			'description' => 'Delete a record',
+			'url' => '',
+		),
+	);
 	
 	
 	# Function to assign defaults additional to the general application defaults
 	function defaults ()
 	{
-		# Specify available arguments as defaults or as NULL (to represent a required argument)
-		$defaults = array (
-			'internalAuth' => true,	// Whether to use internal logins
-			'database' => false,
-			'table' => false,
-			'baseUrl' => false,
-			'databaseUrlPart' => false,	// Whether to include the database in the URL *if* a database has been supplied in the settings
-			//'administratorEmail'	=> $_SERVER['SERVER_ADMIN'], /* Defined below */	// Who receives error notifications (or false if disable notifications)
-			'showBreadcrumbTrail'	 => true,
-			'excludeMetadataFields' => array ('Field', 'Collation', 'Default', 'Privileges'),
-			'commentsAsHeadings' => true,	// Whether to use comments as headings if there are any comments
-			'convertJoinsInView' => true,	// Whether to convert joins when viewing a table
-			'clonePrefillsSourceKey' => false,	// Whether cloning should prefill the source record's key
-			'displayErrorDebugging' => false,	// Whether to show error debug info on-screen
-			'highlightMainTable'	=> true,	// Whether to make bold a table whose name is the same as the database
-			'attributes' => array (),
-			'exclude' => array (),
-			'validation' => array (),
-			'deny' => false,	// Deny edit access to database(s)/table(s)
-			'denyInformUser' => true,	// Whether to inform the user if a database/table is denied
-			'denyAdministratorOverride' => true,	// Whether to allow administrators access to denied database(s)/table(s)
-			'userIsAdministrator' => false,	// Whether the user is an administrator
-			'includeOnly' => array (),
-			'nullText' => '',	// ultimateForm defaults
-			'cols' => 60,		// ultimateForm defaults
-			'rows' => 4,		// ultimateForm defaults
-			'lookupFunctionParameters' => array (),
-			'refreshSeconds' => 0,	// Refresh time in seconds after editing an article
-			'showViewLink' => false,	// Whether to show the redundant 'view' link in the record listings
-			'compressWhiteSpace' => true,	// Whether to compress whitespace between table cells in the HTML
-		);
-		
 		# Return the defaults
-		return $defaults;
+		return $this->defaults;
+	}
+	
+	
+	# Define supported editing actions
+	function actions ()
+	{
+		# Return the actions
+		return $this->actions;
 	}
 	
 	
 	# Constructor
-	function main ($settings = array (), &$html = NULL, $databaseConnection = NULL)
+	function __construct ($databaseConnection = NULL, $settings = array ())
 	{
-		# Determine whether the HTML is shown directly
-		$showHtmlDirectly = ($html === NULL);
+		# Start the HTML
+		$html  = '';
 		
-		# Start (or continue) the HTML
-		if (!$html) {$html  = '';}
-		
-		# Require authentication
-		if (!$this->user = $this->logininternal ()) {
-			if ($showHtmlDirectly) {echo $html;}
-			return false;
-		}
-		
-		
-/*
 		# Load required libraries
 		require_once ('application.php');
 		
@@ -130,7 +121,7 @@ class sinenomine extends frontControllerApplication
 		
 		# Determine if the user is an administrator
 		$this->userIsAdministrator = $this->settings['userIsAdministrator'];
-*/		
+		
 		# Ensure any deny list is an array
 		$this->settings['deny'] = application::ensureArray ($this->settings['deny']);
 		
@@ -139,59 +130,51 @@ class sinenomine extends frontControllerApplication
 			$this->settings['deny'] = false;
 		}
 		
-		# Attempt to use the supplied connection if supplied (it will otherwise be taken from the FrontController)
-		if (!is_null ($databaseConnection)) {
+		#!# Connect to the database if no database connection has been supplied
+		
+		
+		# Make a cursory attempt to ensure there is a database connection
+		if (!$databaseConnection->connection) {
+			$html .= $this->error ('No valid database connection was supplied.');
+		} else {
 			
-			# Make a cursory attempt to ensure there is a database connection
-			if (!$databaseConnection->connection) {
-				$html .= $this->error ('No valid database connection was supplied.');
-			} else {
-				
-				# Make the database connection available, replacing anything that might have been supplied by the FrontController
-				$this->databaseConnection = $databaseConnection;
-			}
+			# Make the database connection available
+			$this->databaseConnection = $databaseConnection;
+			
+			# Provide encoded versions of particular class variables for use in pages
+			$this->hostnameEntities = htmlspecialchars ($this->databaseConnection->hostname);
+			
+			# Set up the environment and take action, caching the HTML
+			$actionHtml = $this->main ();
+			
+			# Build the HTML
+			$html .= $this->breadcrumbTrail ();
+			$html .= $actionHtml;
 		}
-		
-		# Provide encoded versions of particular class variables for use in pages
-		$this->hostnameEntities = htmlspecialchars ($this->databaseConnection->hostname);
-		
-		# Set up the environment and take action, caching the HTML
-		$actionHtml = $this->run ();
-		
-		# Build the HTML
-		$html .= $this->breadcrumbTrail ();
-		$html .= $actionHtml;
 		
 		# Show the HTML
 		#!# Add ability to return instead
-		if ($showHtmlDirectly) {echo $html;}
-		
-		# Notional return value (HTML is passed by reference)
-		return true;
+		echo $html;
 	}
 	
 	
 	# Function to set up the environment and take action
-	function run ()
+	function main ()
 	{
 		# Start the HTML
 		$html  = '';
 		
-		/*
 		# Determine the action to take, using the default (index) if none supplied
 		if (!$this->action = (!isSet ($_GET['do']) ? 'index' : (array_key_exists ($_GET['do'], $this->actions) ? $_GET['do'] : false))) {
 			$html .= "\n<p>No valid action was specified.</p>";
 			return $html;
 		}
-		*/
-		
-		/*
-		# Show title
-		$html = "\n<h2>" . htmlspecialchars ($this->actions[$this->action]) . '</h2>';
-		*/
 		
 		# Determine whether links should include the database URL part
 		$this->includeDatabaseUrlPart = (!$this->settings['database'] || ($this->settings['database'] && $this->settings['databaseUrlPart']));
+		
+		# Show title
+		$html = "\n<h2>" . htmlspecialchars ($this->actions[$this->action]['description']) . '</h2>';
 		
 		# Get the available databases
 		$this->databases = $this->databaseConnection->getDatabases ();
@@ -273,7 +256,7 @@ class sinenomine extends frontControllerApplication
 		# Ensure a table is supplied
 		if (!$this->settings['table'] && !isSet ($_GET['table'])) {
 			$html .= "\n<p>Please select a table:</p>";
-			$html .= $this->linklist ($this->tables, $this->databaseLink, ($this->settings['highlightMainTable'] ? $this->database : false), $addAddLink = true);
+			$html .= $this->linklist ($this->tables, $this->databaseLink, ($this->settings['highlightMainTable'] ? $this->database : false));
 			return $html;
 		}
 		
@@ -314,6 +297,7 @@ class sinenomine extends frontControllerApplication
 		$this->headings = $this->databaseConnection->getHeadings ($this->database, $this->table, $this->fields, $useFieldnameIfEmpty = true, $this->settings['commentsAsHeadings']);
 		
 		# Get the unique field
+		#!# Is this error condition necessary?
 		if (!$this->key = $this->databaseConnection->getUniqueField ($this->database, $this->table, $this->fields)) {
 			return $html .= $this->error ('This table appears not to have a unique key field.');
 		}
@@ -358,11 +342,11 @@ class sinenomine extends frontControllerApplication
 		# Construct the list of items, avoiding linking to the current page
 		$items[] = "<a href=\"{$this->baseUrl}/\" title=\"Hostname\">{$this->hostnameEntities}</a>";
 		if ($this->database) {$items[] = (($this->action == 'index' && !$this->table) ? "<span title=\"Database\">{$this->databaseEntities}</span>" : $this->createLink ($this->database));}
-		if ($this->table) {$items[] = ($this->action == 'index' ? "<span title=\"Table\">{$this->tableEntities}</span>" : $this->createLink ($this->database, $this->table)) . ($this->tableStatus['Comment'] ? ' <span class="comment"><em>(' . htmlspecialchars ($this->tableStatus['Comment']) . ')</em></span>' : '');}
+		if ($this->table) {$items[] = ($this->action == 'index' ? "<span title=\"Table\">{$this->tableEntities}</span>" : $this->createLink ($this->database, $this->table)) . ' <span class="comment"><em>(' . htmlspecialchars ($this->tableStatus['Comment']) . ')</em></span>';}
 		if ($this->record) {$items[] = ($this->action == 'record' ? "<span title=\"Record\">{$this->recordEntities}</span>" : $this->createLink ($this->database, $this->table, $this->record));}
 		
 		# Compile the HTML
-		$html = "\n\n<p>You are in: " . implode (' &raquo; ', $items) . '</p>';
+		$html = "\n\n<p class=\"locationline\">You are in: " . implode (' &raquo; ', $items) . '</p>';
 		
 		# Return the HTML
 		return $html;
@@ -370,17 +354,13 @@ class sinenomine extends frontControllerApplication
 	
 	
 	# Function to create a list of links
-	function linklist ($data, $baseUrl = '', $highlightMainTable = false, $addAddLink = false)
+	function linklist ($data, $baseUrl = '', $highlightMainTable = false)
 	{
-		# Adjust the baseUrl for these links if it is empty, i.e. root
-		if ($baseUrl == '') {$baseUrl = '/';}
-		
 		# Create the links
 		$list = array ();
 		foreach ($data as $index => $item) {
 			$list[$index] = "<a href=\"{$baseUrl}" . rawurlencode ($item) . '/">' . htmlspecialchars ($item) . '</a>';
 			if ($highlightMainTable && ($item == $highlightMainTable)) {$list[$index] = "<strong>{$list[$index]}</strong>";}
-			if ($addAddLink) {$list[$index] .= " &nbsp;<a href=\"{$baseUrl}" . rawurlencode ($item) . '/add.html" title="Add new record">[+]</a>';}
 		}
 		
 		# Create the list
@@ -426,8 +406,7 @@ class sinenomine extends frontControllerApplication
 			#!# Ideally change 'Field' to 'Fieldname'
 			if ($commentsFound) {$metadataFields = array_merge (array ('Field'), $metadataFields);}
 			foreach ($metadataFields as $metadataField) {
-				$table[$metadataField] = array ($metadataField . ':', '', '', '',); // Placeholders against the starting Record/View/edit/clone/delete link headings
-				if ($this->settings['showViewLink']) {$table[$metadataField][] = '';}
+				$table[$metadataField] = array ($metadataField . ':', '', '', '', '',); // Placeholders against the starting Record/View/edit/clone/delete link headings
 				foreach ($this->fields as $fieldname => $attributes) {
 					
 					# Add the metadata to the table; may be adjusted below
@@ -454,10 +433,8 @@ class sinenomine extends frontControllerApplication
 		#!# Consider converting to using createLink, though the following is safely encoded
 		foreach ($data as $key => $attributes) {
 			$key = htmlspecialchars ($key);
-				$table[$key]['Record'] = '<strong>' . "<a href=\"{$this->tableLink}" . urlencode ($key) . '/">' . htmlspecialchars ($attributes[$this->key]) . '</a></strong>';
-			if ($this->settings['showViewLink']) {
-				$table[$key]['View'] = "<a href=\"{$this->tableLink}" . urlencode ($key) . '/">View</a>';
-			}
+			$table[$key]['Record'] = '<strong>' . htmlspecialchars ($attributes[$this->key]) . '</strong>';
+			$table[$key]['View'] = "<a href=\"{$this->tableLink}" . urlencode ($key) . '/">View</a>';
 			$actions = array ('edit', 'clone', 'delete');
 			foreach ($actions as $action) {
 				$table[$key][$action] = "<a href=\"{$this->tableLink}" . urlencode ($key) . "/{$action}.html\">" . ucfirst ($action) . '</a>';
@@ -474,21 +451,20 @@ class sinenomine extends frontControllerApplication
 		# Convert fieldnames containing joins
 		$joinsFound = false;
 		foreach ($table['Field'] as $fieldname => $label) {
-			if ($join = $this->convertJoin ($label)) {
+			if ($join = $this->databaseConnection->convertJoin ($label)) {
 				$table['Field'][$fieldname] = "<abbr title=\"{$label}\">{$join['field']}</abbr>&nbsp;&raquo;<br />" . $this->createLink ($join['database'], $join['table'], NULL, true, $asHtmlNewWindow = true, $asHtmlTableIncludesDatabase = true);
 				$joinsFound = true;
 			}
 		}
 		
 		# Compile the HTML
-		$totalFields = count ($this->fields);
-		$html .= "\n<p>This table, <a href=\"{$this->databaseLink}\">{$this->databaseEntities}</a>.{$this->tableEntities}, contains <strong>" . ($total == 1 ? 'one record' : "{$total} records") . '</strong> (each with ' . ($totalFields == 1 ? 'one field' : "{$totalFields} fields") . '), as listed below. You can switch to ' . ($fullView ? "<a href=\"{$this->tableLink}listing.html\">quick index</a> mode." : "<a href=\"{$this->tableLink}\">full-entry view</a> (default) mode.") . '</p>';
+		$html .= "\n<p>There " . ($total == 1 ? "is one record" : "are {$total} records") . ", as listed below. You can switch to " . ($fullView ? "<a href=\"{$this->tableLink}listing.html\">quick index</a> mode." : "<a href=\"{$this->tableLink}\">full-entry view</a> (default) mode.") . '</p>';
 		$html .= "\n<p>You can also <a href=\"{$this->tableLink}add.html\">add a record</a>.</p>";
 		#!# Enable sortability
 		// $html .= "\n" . '<!-- Enable table sortability: --><script language="javascript" type="text/javascript" src="http://www.geog.cam.ac.uk/sitetech/sorttable.js"></script>';
 		#!# Add line highlighting, perhaps using js
 		#!# Consider option to compress output using str_replace ("\n\t\t", "", $html) for big tables
-		$html .= application::htmlTable ($table, $this->headings, ($fullView ? 'sinenomine' : 'lines'), false, false, true, false, $addCellClasses = false, $addRowKeys = true, array (), $this->settings['compressWhiteSpace']);
+		$html .= application::htmlTable ($table, $this->headings, ($fullView ? 'sinenomine' : 'lines'), false, true, true, false, $addCellClasses = false, $addRowKeys = true);
 		
 		# Show the table
 		return $html;
@@ -728,23 +704,6 @@ class sinenomine extends frontControllerApplication
 	}
 	
 	
-	# Function to convert joins
-	function convertJoin ($fieldname)
-	{
-		# Return if matched
-		if (ereg ('^([a-zA-Z0-9]+)__JOIN__([a-zA-Z0-9]+)__([a-zA-Z0-9]+)__reserved$', $fieldname, $matches)) {
-			return array (
-				'field' => $matches[1],
-				'database' => $matches[2],
-				'table' => $matches[3],
-			);
-		}
-		
-		# Otherwise return false;
-		return false;
-	}
-	
-	
 	# Function to do referential integrity checks
 	function joinsTo ($database, $table, $record = false, $returnAsString = true)
 	{
@@ -762,7 +721,7 @@ class sinenomine extends frontControllerApplication
 				foreach ($fields as $field => $attributes) {
 					
 					# If a join is found, add it to the list
-					if ($join = $this->convertJoin ($field)) {
+					if ($join = $this->databaseConnection->convertJoin ($field)) {
 						if (($this->database == $join['database']) && ($this->table == $join['table'])) {
 							$joins[$database][$table][$field] = true;
 							
@@ -916,101 +875,11 @@ class sinenomine extends frontControllerApplication
 	
 	
 	# Define a lookup function used for data binding
+	#!# Remove this stub
 	#!# Caching mechanism needed for repeated fields (and fieldnames as below), one level higher in the calling structure
-	function lookup ($databaseConnection, $fieldName, $fieldType, $showKeys = false, $orderby = false, $sort = true, $group = true)
+	function lookup ($databaseConnection, $fieldName, $fieldType, $showKeys = false, $orderby = false, $sort = true, $group = true, $firstOnly = false)
 	{
-		# Determine if it's a special JOIN field
-		$values = array ();
-		$targetDatabase = NULL;
-		$targetTable = NULL;
-		if (eregi ('^([a-zA-Z0-9]+)__JOIN__([a-zA-Z0-9]+)__([a-zA-Z0-9]+)__reserved$', $fieldName, $matches)) {
-			
-			# Assign the new fieldname
-			$fieldName = $matches[1];
-			$targetDatabase = $matches[2];
-			$targetTable = $matches[3];
-			
-			# Get the fields of the target table
-			$fields = $databaseConnection->getFieldNames ($matches[2], $matches[3]);
-			
-			# Deal with ordering
-			$orderbySql = '';
-			if ($orderby) {
-				
-				# Get those fields in the orderby list that exist in the table being linked to
-				$orderby = application::ensureArray ($orderby);
-				$fieldsPresent = array_intersect ($orderby, $fields);
-				
-				# Compile the SQL
-				$orderbySql = ' ORDER BY ' . implode (',', $fieldsPresent);
-			}
-			
-			# Get the data
-			#!# Enable recursive lookups
-			$query = "SELECT * FROM {$targetDatabase}.{$targetTable}{$orderbySql};";
-			if (!$data = $databaseConnection->getData ($query, "{$targetDatabase}.{$targetTable}")) {
-				return array ($fieldName, array (), $targetDatabase, $targetTable);
-			}
-			
-			# Sort
-			if ($sort) {ksort ($values);}
-			
-			# Show the keys if not a numeric fieldtype or if forced
-			$showKey = ($showKeys ? $showKeys : (!strstr ($fieldType, 'int(')));
-			
-			# Deal with grouping if required
-			$grouped = false;
-			if ($group) {
-				
-				# Determine the field to attempt to use, either a supplied fieldname or the second (first non-key) field. If the group 'name' supplied is a number, treat as an index (e.g. second key name)
-				$groupField = (($group === true || is_numeric ($group)) ? application::arrayKeyName ($data, (is_numeric ($group) ? $group : 2), true) : $group);
-				
-				# Confirm existence of that field
-				if ($groupField && in_array ($groupField, $fields)) {
-					
-					# Find if any group field values are unique; if so, regroup the whole dataset; if not, don't regroup
-					$groupValues = array ();
-					foreach ($data as $key => $rowData) {
-						$groupFieldValue = $rowData[$groupField];
-						if (!in_array ($groupFieldValue, $groupValues)) {
-							$groupValues[$key] = $groupFieldValue;
-						} else {
-							
-							# Regroup the data and flag this
-							$data = application::regroup ($data, $groupField, false);
-							$grouped = true;
-							break;
-						}
-					}
-				}
-			}
-			
-			# Convert the data into a single key/value pair, removing repetition of the key if required
-			if ($grouped) {
-				foreach ($data as $groupKey => $groupData) {
-					foreach ($groupData as $key => $rowData) {
-						#!# This assumes the key is the first ...
-						array_shift ($rowData);
-						/*
-						unset ($rowData[$groupField]);
-						if (application::allArrayElementsEmpty ($rowData)) {
-							array_unshift ($rowData, "{{$groupKey}}");
-						}
-						*/
-						$values[$groupKey][$key] = ($showKey ? "{$key}: " : '') . implode (' - ', array_values ($rowData));
-					}
-				}
-			} else {
-				foreach ($data as $key => $rowData) {
-					#!# This assumes the key is the first ...
-					array_shift ($rowData);
-					$values[$key] = ($showKey ? "{$key}: " : '') . implode (' - ', array_values ($rowData));
-				}
-			}
-		}
-		
-		# Return the field name and the lookup values
-		return array ($fieldName, $values, $targetDatabase, $targetTable);
+		return database::lookup ($databaseConnection, $fieldName, $fieldType, $showKeys, $orderby, $sort, $group, $firstOnly);
 	}
 	
 	
@@ -1031,7 +900,7 @@ class sinenomine extends frontControllerApplication
 			if (empty ($value)) {continue;}
 			
 			# Convert the join or skip if not a join
-			if (!$joins = self::convertJoin ($fieldname)) {continue;}
+			if (!$joins = $this->databaseConnection->convertJoin ($fieldname)) {continue;}
 			
 			# Get the unique field name for the target table, or skip if fails
 			if (!isSet ($uniqueFields[$joins['database']][$joins['table']])) {
