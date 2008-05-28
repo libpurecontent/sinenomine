@@ -1,7 +1,6 @@
 <?php
 
 #!# Joins to empty tables seem to revert to a standard input field rather than an empty SELECT list
-#!# Joins needed, e.g. http://sinenomine.dnsalias.net/helpdesk/administrators/
 #!# Create pagination UI
 #!# Need to test data object editing version
 #!# How are unknown field types dealt with?
@@ -64,6 +63,8 @@ class sinenomine
 		'logfile' => false,
 		'application' => false,	// Name of a calling application
 		'intelligence' => true,	// Whether to enable dataBinding intelligence
+		'pagination' => 100,	// Whether to enable pagination, and if so, maximum records per max
+		'paginationRedirect'	 => true,	// Whether to enable redirects on selecting a page that does not exist (e.g. 10 pages, page 11 selected results in redirection to page 10)
 		'rewrite' => true,	// Whether mod_rewrite is on
 	);
 	
@@ -111,6 +112,7 @@ class sinenomine
 		# Load required libraries
 		require_once ('application.php');
 		require_once ('database.php');
+		require_once ('pureContent.php');
 		// session.php is loaded below, as it depends on settings which are dependent on application.php
 		
 		# Add additional defaults
@@ -299,7 +301,7 @@ class sinenomine
 		}
 		
 		# Determine a link to database level
-		$this->databaseLink = $this->createLink ($this->database, NULL, NULL, NULL, NULL, NULL, false);
+		$this->databaseLink = $this->createLink ($this->database, NULL, NULL, NULL, NULL, NULL, NULL, NULL, false);
 		
 		# Ensure a table is supplied
 		if (!$this->settings['table'] && !isSet ($_GET['table'])) {
@@ -331,7 +333,7 @@ class sinenomine
 		$this->tableEntities = htmlspecialchars ($this->table);
 		
 		# Determine a link to table level
-		$this->tableLink = $this->createLink ($this->database, $this->table, NULL, NULL, NULL, NULL, false);
+		$this->tableLink = $this->createLink ($this->database, $this->table, NULL, NULL, NULL, NULL, NULL, NULL, false);
 		
 		# Get table status
 		$this->tableStatus = $this->databaseConnection->getTableStatus ($this->database, $this->table);
@@ -380,13 +382,15 @@ class sinenomine
 			} else {
 				$this->record = $_GET['record'];
 				$this->recordEntities = htmlspecialchars ($this->record);
-				$this->recordLink = $this->createLink ($this->database, $this->table, $this->record, NULL, NULL, NULL, false);
+				$this->recordLink = $this->createLink ($this->database, $this->table, $this->record, NULL, NULL, NULL, NULL, NULL, false);
 			}
 		}
 		
 		# Take action
 		if ($this->action == 'clone') {$this->action = 'cloneRecord';}	// 'clone' can't be used as a function name
 		$html .= $this->{$this->action} ();
+		
+		# Return the value
 		return $html;
 	}
 	
@@ -485,7 +489,7 @@ class sinenomine
 				$class  = ($item == $this->table ? 'current' : false);
 				if ($this->settings['highlightMainTable'] && ($item == $this->database)) {$class .= ($class ? ' ' : '') . 'maintable';}
 				$label = $item;
-				$link = $this->createLink ($databases, $item, NULL, NULL, $item . $total, $class);
+				$link = $this->createLink ($databases, $item, NULL, NULL, $item . $total, NULL, NULL, $class);
 			}
 			
 			# Add an [+] link afterwards if wanted
@@ -520,18 +524,83 @@ class sinenomine
 		$orderBy = ((isSet ($_GET['orderby']) && array_key_exists ($_GET['orderby'], $this->fields)) ? $_GET['orderby'] : $this->key);
 		$orderBySql = ((isSet ($_GET['orderby']) && array_key_exists ($_GET['orderby'], $this->fields)) ? "{$_GET['orderby']}{$direction},{$this->key}" : $this->key);
 		
+		# Determine whether to use pagination
+		$usePagination = ($this->settings['pagination'] && $fullView);
+		
+		# Apply pagination if necessary
+		$page = NULL;
+		$allRecords = (isSet ($_GET['page']) && ($_GET['page'] == 'all'));
+		$pageInUse = NULL;
+		$paginationSql = '';
+		$paginationHtml = '';
+		if ($usePagination) {
+			
+			# Get a count of the data for pagination purposes
+			if (!$totalRecords = $this->databaseConnection->getTotalRecords ($this->database, $this->table)) {
+				$html .= "\n<p>There are no records in the <em>{$this->tableEntities}</em> table.</p>\n<p>You can " . $this->createLink ($this->database, $this->table, NULL, 'add', 'add a record', 'action button add') . '.</p>';
+				return $html;
+			}
+			
+			# Calculate pagination
+			$page = ((isSet ($_GET['page']) && is_numeric ($_GET['page'])) ? $_GET['page'] : 1);
+			$pageInUse = ($allRecords ? 'all' : $page);
+			$pageOriginal = $page;
+			list ($totalPages, $offset, $totalRecords, $limit, $page) = application::getPagerData ($totalRecords, $this->settings['pagination'], $page);
+			
+			# Assemble the pagination SQL, if page is not 'all'
+			if (!$allRecords) {
+				$paginationSql = " LIMIT {$offset},{$limit}";
+			}
+			
+			# Assemble the pagination HTML
+			if ($totalPages > 1) {
+				
+				# Maintain order by and direction
+				$linkArguments = array ();
+				if ($descending) {$linkArguments['direction'] = 'desc';}
+				if ($orderBy != $this->key) {$linkArguments['orderby'] = $orderBy;}
+				
+				# Redirect the user to the nearest page number if the requested page does not exist
+				if ($page != $pageOriginal) {
+					$redirectTo = $this->createLink ($this->database, $this->table, NULL, NULL, NULL, NULL, $page, $linkArguments, $asHtml = false);
+					if ($this->settings['paginationRedirect']) {
+						application::sendHeader (301, $_SERVER['_SITE_URL'] . $redirectTo);
+					}
+					$html .= "<p>Please click here to proceed to " . $this->createLink ($this->database, $this->table, NULL, NULL, "page {$page}", 'action button list', $page, $linkArguments) . " of the record listing for " . $this->createLink ($this->database, $this->table, NULL, NULL, NULL, 'action button list') . ". (page {$pageOriginal} does not exist).</p>";
+					return $html;
+				}
+				
+				# Create page links
+				$pagesList = array ();
+				for ($i = 1; $i <= $totalPages; $i++) {
+					$pagesList[] = $this->createLink ($this->database, $this->table, NULL, NULL, NULL, ($i == $pageInUse ? 'selected' : NULL), $i, $linkArguments);
+				}
+				$pagesList[] = $this->createLink ($this->database, $this->table, NULL, NULL, 'All records', ($allRecords ? 'selected' : NULL), 'all');
+				$paginationHtml  = "\n<p class=\"paginationsummary\">Showing <strong>" . ($allRecords ? 'all records' : "page {$page} of {$totalPages}") . "</strong>" . ($allRecords ? '' : " (with max. {$limit} " . ($limit == 1 ? 'record' : 'records') . " per page)") . '.</p>';
+				$paginationHtml .= "\n<p class=\"paginationlist\">View page: " . implode (' <span>|</span> ', $pagesList) . '</p>';
+			}
+		}
+		
 		# Get the data
-		$query = 'SELECT ' . ($fullView ? '*' : $this->key) . " FROM `{$this->database}`.`{$this->table}` ORDER BY {$orderBySql}{$direction};";
-		if (!$data = $this->databaseConnection->getData ($query, "{$this->database}.{$this->table}")) {
+		$query = 'SELECT ' . ($fullView ? '*' : $this->key) . " FROM `{$this->database}`.`{$this->table}` ORDER BY {$orderBySql}{$direction}{$paginationSql};";
+		$data = $this->databaseConnection->getData ($query, "{$this->database}.{$this->table}");
+		$visibleRecords = count ($data);
+		
+		# Assign the count if pagination has not been set
+		if (!$usePagination) {
+			$totalRecords = count ($data);
+		}
+		
+		# If there are no records, say so
+		if (!$totalRecords) {
 			$html .= "\n<p>There are no records in the <em>{$this->tableEntities}</em> table.</p>\n<p>You can " . $this->createLink ($this->database, $this->table, NULL, 'add', 'add a record', 'action button add') . '.</p>';
 			return $html;
 		}
 		
 		# Convert join data
-		$data = $this->convertJoinDataRecord ($data, $this->fields);
-		
-		# Determine total records
-		$total = count ($data);
+		if ($this->settings['convertJoinsInView']) {
+			$data = $this->convertJoinData ($data, $this->fields, false, $this->joins);
+		}
 		
 		# Start a table, adding in metadata in full-view mode
 		$table = array ();
@@ -607,26 +676,47 @@ class sinenomine
 		if ($fullView) {
 			foreach ($table['Field'] as $fieldname => $label) {
 				if (isSet ($this->fields[$fieldname]['_field'])) {
-					$table['Field'][$fieldname] = "<abbr title=\"{$label}\">{$this->fields[$fieldname]['_field']}</abbr>&nbsp;&raquo;<br />" . $this->createLink ($this->fields[$fieldname]['_targetDatabase'], $this->fields[$fieldname]['_targetTable'], NULL, NULL, NULL, NULL, true, $asHtmlNewWindow = true, $asHtmlTableIncludesDatabase = true);
+					$table['Field'][$fieldname] = "<abbr title=\"{$label}\">{$this->fields[$fieldname]['_field']}</abbr>&nbsp;&raquo;<br />" . $this->createLink ($this->fields[$fieldname]['_targetDatabase'], $this->fields[$fieldname]['_targetTable'], NULL, NULL, NULL, NULL, NULL, NULL, true, $asHtmlNewWindow = true, $asHtmlTableIncludesDatabase = true);
 				}
 			}
 		}
 		
-		# Add the orderby links to the headings
+		# Create the table headings and determine the link arguments
 		$headings = $this->headings;
 		foreach ($headings as $field => $visible) {
-			$fieldLink = ($this->key == $field ? false : 'orderby=' . $this->doubleEncode (htmlspecialchars ($field)));
-			$selected = (($field == $orderBy) ? ' class="selected"' : '');
-			$arrow = (($field == $orderBy) ? ($descending ? ' &uarr;' : ' &darr;') : '');
-			$directionLink = ((($field == $orderBy) && !$descending) ? ($fieldLink ? '&amp;' : '') . 'direction=desc' : '');
-			$headerLink = $this->createLink ($this->database, $this->table, NULL, NULL, NULL, NULL, false) . (($fieldLink || $directionLink) ? ($this->settings['rewrite'] ? '?' : '&amp;') . "{$fieldLink}{$directionLink}" : '');
-			$headings[$field] = "<a href=\"{$headerLink}\"{$selected}>{$visible}{$arrow}</a>";
+			
+			# Start a label string and an array of link arguments
+			$label  = $field;
+			$linkArguments = array ();
+			
+			# Add ordering to the link arguments if necessary
+			if ($this->key != $field) {
+				$linkArguments['orderby'] = $field;
+			}
+			
+			# Add direction to the link arguments if necessary
+			if ($field == $orderBy) {
+				if (!$descending) {
+					$linkArguments['direction'] = 'desc';
+				}
+				$nonBreakingSpace = chr(0xc2).chr(0xa0);	// See http://www.tachyonsoft.com/uc0000.htm#U00A0
+				$upArrow = chr(0xe2).chr(0x86).chr(0x91);	// See http://www.tachyonsoft.com/uc0021.htm#U2191
+				$downArrow = chr(0xe2).chr(0x86).chr(0x93);	// See http://www.tachyonsoft.com/uc0021.htm#U2193
+				$label .= $nonBreakingSpace . ($descending ? $upArrow : $downArrow);
+			}
+			
+			# Add a class to the arguments if necessary
+			$class = (($field == $orderBy) ? 'selected' : NULL);
+			
+			# Compile the link
+			$headings[$field] = $this->createLink ($this->database, $this->table, NULL, NULL, $label, $class, $pageInUse, $linkArguments);
 		}
 		
 		# Compile the HTML
 		$totalFields = count ($this->fields);
-		$html .= "\n<p>This table, " . $this->createLink ($this->database) . ".{$this->tableEntities}, contains <strong>" . ($total == 1 ? 'one record' : "{$total} records") . '</strong> (each with ' . ($totalFields == 1 ? 'one field' : "{$totalFields} fields") . '), as listed below. You can switch to ' . ($fullView ? $this->createLink ($this->database, $this->table, NULL, 'listing', 'quick index', 'action button quicklist') . ' mode.' : $this->createLink ($this->database, $this->table, NULL, NULL, 'full-entry view', 'action button list') . ' (default) mode.') . '</p>';
+		$html .= "\n<p>This table, " . $this->createLink ($this->database) . ".{$this->tableEntities}, contains a total of <strong>" . ($totalRecords == 1 ? 'one record' : "{$totalRecords} records") . '</strong> (each with ' . ($totalFields == 1 ? 'one field' : "{$totalFields} fields") . '), ' . ($allRecords ? 'with <strong>' . ($totalRecords == 1 ? 'this record' : 'all records') : 'of which <strong>' . ($visibleRecords == 1 ? 'one record is' : "{$visibleRecords} records are")) . ' listed below</strong>. You can switch to ' . ($fullView ? $this->createLink ($this->database, $this->table, NULL, 'listing', 'quick index', 'action button quicklist') . ' mode.' : $this->createLink ($this->database, $this->table, NULL, NULL, 'full-entry view', 'action button list') . ' (default) mode.') . '</p>';
 		$html .= "\n<p>You can also " . $this->createLink ($this->database, $this->table, NULL, 'add', 'add a record', 'action button add') . '.</p>';
+		$html .= $paginationHtml;
 		#!# Enable sortability
 		// $html .= "\n" . '<!-- Enable table sortability: --><script language="javascript" type="text/javascript" src="http://www.geog.cam.ac.uk/sitetech/sorttable.js"></script>';
 		#!# Add line highlighting, perhaps using js
@@ -660,7 +750,10 @@ class sinenomine
 		$html  = '';
 		
 		# Do lookups
-		$data = $this->convertJoinDataRecord ($this->data, $this->fields);
+		$data = $this->data;
+		if ($this->settings['convertJoinsInView']) {
+			$data = $this->convertJoinData ($this->data, $this->fields, false, $this->joins);
+		}
 		
 		# Create the HTML
 		if (!$embed) {
@@ -808,7 +901,7 @@ class sinenomine
 				$this->record = $record[$this->key];
 			}
 			$this->recordEntities = htmlspecialchars ($this->record);
-			$this->recordLink = $this->createLink ($this->database, $this->table, $this->record, NULL, NULL, NULL, false);
+			$this->recordLink = $this->createLink ($this->database, $this->table, $this->record, NULL, NULL, NULL, NULL, NULL, false);
 		}
 		
 		# (Re-)fetch the data
@@ -963,11 +1056,11 @@ class sinenomine
 				# Loop through each record part of the hierarchical list of joins
 				$links = array ();
 				foreach ($joins as $joinedRecord) {
-					$links[] = $this->createLink ($database, $table, $joinedRecord, NULL, NULL, $class = 'action button view', true, $asHtmlNewWindow = true);
+					$links[] = $this->createLink ($database, $table, $joinedRecord, NULL, NULL, $class = 'action button view', NULL, NULL, true, $asHtmlNewWindow = true);
 				}
 				
 				# Compile the HTML
-				$tableLinks[] = 'In ' . $this->createLink ($database, $table, NULL, NULL, NULL, NULL, true, $asHtmlNewWindow = true, $asHtmlTableIncludesDatabase = true) . ': ' . ((count ($joins) == 1) ? 'record' : 'records') . ' ' . implode (', ', $links);
+				$tableLinks[] = 'In ' . $this->createLink ($database, $table, NULL, NULL, NULL, NULL, NULL, NULL, true, $asHtmlNewWindow = true, $asHtmlTableIncludesDatabase = true) . ': ' . ((count ($joins) == 1) ? 'record' : 'records') . ' ' . implode (', ', $links);
 			}
 		}
 		
@@ -980,7 +1073,7 @@ class sinenomine
 	
 	
 	# Function dealing with consistent link creation, taking account of whether URL-rewriting is on
-	function createLink ($database = NULL, $table = NULL, $record = NULL, $action = NULL, $labelSupplied = NULL, $class = NULL, $asHtml = true, $asHtmlNewWindow = false, $asHtmlTableIncludesDatabase = false, $tooltips = true)
+	function createLink ($database = NULL, $table = NULL, $record = NULL, $action = NULL, $labelSupplied = NULL, $class = NULL, $page = NULL, $arguments = false, $asHtml = true, $asHtmlNewWindow = false, $asHtmlTableIncludesDatabase = false, $tooltips = true)
 	{
 		# Start with the base URL and the database URL if required
 		if ($this->settings['rewrite']) {
@@ -995,14 +1088,28 @@ class sinenomine
 		
 		# Add the table if required
 		if ($table !== NULL) {
-			$link .= ($this->settings['rewrite'] ? $this->doubleEncode ($table) . '/' : (($database && $this->includeDatabaseUrlPart) ? '&amp;' : '') . 'table=' . $this->doubleEncode ($table));
+			$link .= ($this->settings['rewrite'] ? $this->doubleEncode ($table) . '/' : (($database && $this->includeDatabaseUrlPart) ? ($asHtml ? '&amp;' : '&') : '') . 'table=' . $this->doubleEncode ($table));
 			$label = ($asHtmlTableIncludesDatabase ? "{$database}.{$table}" : $table);
 			$tooltip = ($asHtmlTableIncludesDatabase ? "Database &amp; table" : 'Table');
 		}
 		
+		
+		# Add a page number if required
+		if ($page !== NULL) {
+			if ($page != 1) {	// Don't add pointless 'page1.html', under the maxim of keeping URLs short as possible
+				if ($page == 'all') {
+					$link .= ($this->settings['rewrite'] ? "all.html" : ($asHtml ? '&amp;' : '&') . "page=all");
+				} else {
+					$link .= ($this->settings['rewrite'] ? "page{$page}.html" : ($asHtml ? '&amp;' : '&') . "page={$page}");
+				}
+			}
+			$label = $page;
+			$tooltip = 'Page';
+		}
+		
 		# Add the record if required
 		if ($record !== NULL) {
-			$link .= ($this->settings['rewrite'] ? $this->doubleEncode ($record) . '/' : '&amp;record=' . $this->doubleEncode ($record));
+			$link .= ($this->settings['rewrite'] ? $this->doubleEncode ($record) . '/' : ($asHtml ? '&amp;' : '&') . 'record=' . $this->doubleEncode ($record));
 			$label = $record;
 			$tooltip = 'Record';
 		}
@@ -1016,8 +1123,17 @@ class sinenomine
 		
 		# Add the action if required
 		if ($action) {
-			$link .= ($this->settings['rewrite'] ? htmlspecialchars ($action) . '.html' : '&amp;do=' . $this->doubleEncode ($action));
+			$link .= ($this->settings['rewrite'] ? htmlspecialchars ($action) . '.html' : ($asHtml ? '&amp;' : '&') . 'do=' . $this->doubleEncode ($action));
 			$tooltip = ucfirst ($action);
+		}
+		
+		# Add the action if required
+		if ($arguments && is_array ($arguments)) {
+			foreach ($arguments as $key => $value) {
+				$argumentsString[] = htmlspecialchars ("{$key}={$value}");
+			}
+			$argumentsString = implode (($asHtml ? '&amp;' : '&'), $argumentsString);
+			$link .= ($this->settings['rewrite'] ? '?' : ($asHtml ? '&amp;' : '&')) . $argumentsString;
 		}
 		
 		# Compile as HTML if necessary
@@ -1081,7 +1197,7 @@ class sinenomine
 		# Confirm that the record has not been deleted
 		if (!$result['confirmation']) {
 			$html .= "\n<p>The record " . $this->createLink ($this->database, $this->table, $this->record, NULL, $this->record, 'action button view') . ' has <strong>not</strong> been deleted.</p>';
-			$html .= "\n<p>You may wish to " . $this->createLink ($this->database, $this->table, NULL, NULL, 'return to the list of records', $class = 'action button list') . '.</p>';
+			$html .= "\n<p>You may wish to " . $this->createLink ($this->database, $this->table, NULL, NULL, 'return to the list of records', 'action button list') . '.</p>';
 			return $html;
 		}
 		
@@ -1089,7 +1205,7 @@ class sinenomine
 		if (!$this->databaseConnection->delete ($this->database, $this->table, array ($this->key => $this->record))) {
 			return $html .= $this->error ();
 		}
-		$html .= "<p>The record <em>{$this->recordEntities}</em> in the table " . $this->createLink ($this->database, $this->table, NULL, NULL, NULL, $class = 'action button list') . ' has been deleted.</p>';
+		$html .= "<p>The record <em>{$this->recordEntities}</em> in the table " . $this->createLink ($this->database, $this->table, NULL, NULL, NULL, 'action button list') . ' has been deleted.</p>';
 		
 		# Return the HTML
 		return $html;
@@ -1141,7 +1257,7 @@ class sinenomine
 					$commentHtml = ($field['Comment'] ? " <em>'" . htmlspecialchars ($field['Comment']) . "'</em>" : '');
 					
 					# Add the field name to the list
-					$fieldLink = $this->createLink ($database, $table, NULL, NULL, NULL, NULL, false) . ($field['Key'] ? '' : ($this->settings['rewrite'] ? '?' : '&amp;') . 'orderby=' . htmlspecialchars ($field['Field']));
+					$fieldLink = $this->createLink ($database, $table, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, false) . ($field['Key'] ? '' : ($this->settings['rewrite'] ? '?' : '&amp;') . 'orderby=' . htmlspecialchars ($field['Field']));
 					$listFieldItems[] = "<a href=\"{$fieldLink}\" title=\"Field\">" . ($field['Key'] ? '<strong>' : '') . htmlspecialchars ($field['Field']) . ($field['Key'] ? '</strong>' : '') . '</a>' . $joinedToHtml . $typeHtml . $collationHtml . $commentHtml;
 				}
 				
@@ -1162,61 +1278,53 @@ class sinenomine
 	}
 	
 	
-	# Wrapper function for single records
-	function convertJoinDataRecord ($data, $fields)
+	# Function (which can be run statically) to convert key numbers/names in a set of records
+	function convertJoinData ($data, $fields, $databaseConnection = false, $joins = false, $showNumberFields = false, $unsetNumericKey = true, $intJoinZeroClear = true, $modifyDisplay = true, $modifyDisplayConvertUrls = true)
 	{
-		# Wrap the data in a container
-		$records[0] = $data;
+		# Load required libraries (only really required if running statically)
+		require_once ('application.php');
+		require_once ('database.php');
 		
-		# Convert the data
-		$records = $this->convertJoinDataRecords ($records, $fields);
+		# Return the data unmodified if there is none or it is not an array
+		if (!$data || (!is_array ($data))) {return $data;}
 		
-		# Remove the container
-		$data = $records[0];
-		
-		# Return the data
-		return $data;
-	}
-	
-	
-	# Function to convert key numbers/names in a set of records
-	function convertJoinDataRecords ($data, $fields, /* $joins = NULL, */ /* $databaseConnection = false, */ $convertUrls = true, $showNumberFields = false)
-	{
-		/*
-		# Get the database connection
+		# Get the database connection if running this statically
 		if ($databaseConnection) {
 			$this->databaseConnection = $databaseConnection;
 		}
-		*/
 		
-		/*
 		# Use the pre-computed joins, or compute them
-		if ($joins === NULL) {
+		if ($joins === false) {
 			foreach ($fields as $fieldname => $fieldAttributes) {
 				if ($matches = $this->databaseConnection->convertJoin ($fieldAttributes['Field'])) {
 					$joins[$fieldname] = $matches;
 				}
 			}
 		}
-		*/
-		
-		# Return the data unmodified if joins should not be looked up
-		if (!$this->settings['convertJoinsInView']) {return $data;}
 		
 		# Return the data unmodified if there are no joins
-		if (!$this->joins) {return $data;}
+		if (!$joins) {return $data;}
 		
-		# Return the data unodified if there is none or it is not an array
-		if (!$data || (!is_array ($data))) {return $data;}
+		# Determine if the data is multidimensional, i.e. a set of records in an array or just a single record
+		$isMultidimensional = application::isMultidimensionalArray ($data);
 		
-		# Start an array of values that need to be looked up
+		# If the record is not multi-dimensional, wrap it first
+		if (!$isMultidimensional) {
+			$records[0] = $data;
+		} else {
+			$records = $data;
+		}
+		
+		# Start an array to hold values that need to be looked up
 		$unconverted = array ();
 		
 		# Go through each record to get the unique values in the joined fields and create a list of them
-		foreach ($data as $key => $record) {
+		foreach ($records as $key => $record) {
 			foreach ($record as $field => $value) {
-				if (array_key_exists ($field, $this->joins)) {
-					$unconverted[$field][$value] = $value;
+				if (array_key_exists ($field, $joins)) {
+					if ($value != '') {	// Do not include empty strings, otherwise the performance will decline massively
+						$unconverted[$field][$value] = $value;
+					}
 				}
 			}
 		}
@@ -1226,7 +1334,7 @@ class sinenomine
 		foreach ($unconverted as $field => $values) {
 			
 			# Get the unique field name for the target table, or skip if fails
-			$uniqueField = $this->databaseConnection->getUniqueField ($this->joins[$field]['database'], $this->joins[$field]['table']);
+			$uniqueField = $this->databaseConnection->getUniqueField ($joins[$field]['database'], $joins[$field]['table']);
 			
 			# Quote the values for use in a regexp
 			#!# preg_quote doesn't necessary match MySQL REGEXP - need to check this
@@ -1235,127 +1343,63 @@ class sinenomine
 			}
 			
 			# Get the data
-			$query = "SELECT * FROM `{$this->joins[$field]['database']}`.`{$this->joins[$field]['table']}` WHERE `{$uniqueField}` REGEXP '(^" . implode ('|', $values) . "$)';";
-			$tempData = $this->databaseConnection->getData ($query, "{$this->joins[$field]['database']}.{$this->joins[$field]['table']}");
+			$query = "SELECT * FROM `{$joins[$field]['database']}`.`{$joins[$field]['table']}` WHERE `{$uniqueField}` REGEXP '(^" . implode ('|', $values) . "$)';";
+			$tempData = $this->databaseConnection->getData ($query, "{$joins[$field]['database']}.{$joins[$field]['table']}");
 			
-			# Compile the list
+			# Loop through each data set and convert each record
 			foreach ($tempData as $key => $record) {
+				
+				# If required, unset a numeric key, i.e. don't show key in the join data
+				if ($unsetNumericKey) {
+					if (is_numeric ($record[$uniqueField])) {
+						unset ($record[$uniqueField]);
+					}
+				}
+				
+				# Compile the data, showing either all fields in the joined data, or the first $showNumberFields fields
+				if ($showNumberFields) {
+					$items = array ();
+					$i = 0;
+					foreach ($record as $recordKey => $item) {
+						if ($i == $showNumberFields) {break;}
+						$items[$recordKey] = $item;
+						$i++;
+					}
+					$record = $items;
+				}
+				
+				# If required, modify the display, before being passed to the implode stage
+				if ($modifyDisplay) {
+					#!# This will be rather inefficient
+					$fields = $this->databaseConnection->getFields ($joins[$field]['database'], $joins[$field]['table']);
+					$record = sinenomine::modifyDisplay ($record, $fields, $modifyDisplayConvertUrls);
+				}
+				
+				# Put the new value into the data
+				#!# Ideally surround this with <span class="comment"> but requires difficult changes to the htmlspecialchars handling
 				$conversions[$field][$key] = implode (utf8_encode (' » '), $record);
 			}
 		}
 		
 		# Substitute in the conversions if they have been found
-		foreach ($data as $key => $record) {
+		foreach ($records as $key => $record) {
 			foreach ($record as $field => $value) {
-				if (array_key_exists ($field, $this->joins)) {
-					$data[$key][$field] = (isSet ($conversions[$field][$value]) ? $conversions[$field][$value] : $value);
+				if (array_key_exists ($field, $joins)) {
+					$records[$key][$field] = (isSet ($conversions[$field][$value]) ? $conversions[$field][$value] : (($intJoinZeroClear && ($value == '0')) ? NULL : $value));
 				}
 			}
 		}
+		
+		# If the record is not multi-dimensional, unwrap it
+		$data = ($isMultidimensional ? $records : $records[0]);
 		
 		# Return the data
 		return $data;
 	}
 	
 	
-	/*
-	# Function to convert key numbers/names into the looked-up data
-	#!# Rename to convertJoinDataRecord
-	function convertJoinData ($record, $fields, $databaseConnection = false, $convertUrls = true, $showNumberFields = false)
-	{
-		# Get the database connection
-		if ($databaseConnection) {
-			$this->databaseConnection = $databaseConnection;
-		}
-		
-		# Do lookups
-		$uniqueFields = array ();
-		$lookupValues = array ();
-		foreach ($record as $fieldname => $value) {
-			
-			# Skip if no value
-			if (empty ($value)) {continue;}
-			
-			# Convert the join or skip if not a join
-			if (!$joins = $this->databaseConnection->convertJoin ($fieldname)) {continue;}
-			
-			# Get the unique field name for the target table, or skip if fails
-			if (!isSet ($uniqueFields[$joins['database']][$joins['table']])) {
-				if (!$uniqueField = $this->databaseConnection->getUniqueField ($joins['database'], $joins['table'])) {continue;}
-				$uniqueFields[$joins['database']][$joins['table']] = $uniqueField;
-			}
-			
-			# Lookup the data, or skip if fails
-			if (!isSet ($lookupValues[$joins['database']][$joins['table']][$value])) {
-				if (!$tempData = $this->databaseConnection->select ($joins['database'], $joins['table'], array ($uniqueFields[$joins['database']][$joins['table']] => $value), array (), false)) {continue;}
-				$lookupValues[$joins['database']][$joins['table']][$value] = $tempData[0];
-			}
-			
-			# Unset the key if numeric
-			if (is_numeric ($lookupValues[$joins['database']][$joins['table']][$value][$uniqueField])) {
-				unset ($lookupValues[$joins['database']][$joins['table']][$value][$uniqueField]);
-			}
-			
-			# Compile the data, showing either all fields in the joined data, or the first $showNumberFields fields
-			if (!$showNumberFields) {
-				$value = implode (utf8_encode (' » '), $lookupValues[$joins['database']][$joins['table']][$value]);
-			} else {
-				$items = array ();
-				$i = 0;
-				foreach ($lookupValues[$joins['database']][$joins['table']][$value] as $key => $item) {
-					if ($i == $showNumberFields) {break;}
-					$items[] = $item;
-					$i++;
-				}
-				$value = implode (utf8_encode (' » '), $items);
-			}
-			
-			# Put the new value into the data
-			$record[$fieldname] = $value;
-		}
-		
-		# Modify display
-		foreach ($record as $fieldname => $value) {
-			
-			# Convert timestamp fields to human-readable text
-			if (($fields[$fieldname]['Type'] == 'timestamp') || ($fields[$fieldname]['Type'] == 'datetime')) {
-				if ($value == '0000-00-00 00:00:00') {
-					$value = NULL;
-				} else {
-					require_once ('timedate.php');
-					$value = timedate::convertTimestamp ($value);
-				}
-			}
-			
-			# Make entity-safe
-//			# Make entity-safe if not a richtext field
-//			if ($fields[$fieldname]['Type'] != 'text') {
-				$value = htmlspecialchars ($value);
-//			}
-			
-			# Replace line breaks
-			#!# This should be disabled for richtext
-			$value = str_replace ("\n", "<br />\n", $value);
-			
-			# Convert URLs if required
-			#!# Bad smell: move this up the code chain
-			if ($convertUrls) {
-				require_once ('application.php');
-				$value = application::makeClickableLinks ($value, false, '[Link]');
-			}
-			
-			# Put the new value into the data
-			$record[$fieldname] = $value;
-		}
-		
-		# Return the data
-		return $record;
-	}
-	*/
-	
-	
 	# Function to modify display of a record
-	function modifyDisplay ($record)
+	function modifyDisplay ($record, $fields, $convertUrls = true)
 	{
 		# Loop through each field
 		foreach ($record as $fieldname => $value) {
@@ -1370,6 +1414,15 @@ class sinenomine
 				}
 			}
 			
+			# Convert NULL dates
+			if ($fields[$fieldname]['Type'] == 'date') {
+				if ($value == '0000-00-00') {
+					$value = NULL;
+				} else {
+					#!# Convert date needed here as above
+				}
+			}
+			
 			# Make entity-safe
 //			# Make entity-safe if not a richtext field
 //			if ($fields[$fieldname]['Type'] != 'text') {
@@ -1381,7 +1434,6 @@ class sinenomine
 			$value = str_replace ("\n", "<br />\n", $value);
 			
 			# Convert URLs if required
-			#!# Bad smell: move this up the code chain
 			if ($convertUrls) {
 				require_once ('application.php');
 				$value = application::makeClickableLinks ($value, false, '[Link]');
@@ -1487,6 +1539,15 @@ class sinenomine
 		div.graybox:hover {background-color: #fafafa; border-color: #aaa;}
 		div.graybox h2, div.graybox h3 {margin-top: 0.4em;}
 		div.graybox p {text-align: left; margin-top: 10px;}
+		/* Pagination */
+		p.paginationsummary {padding-bottom: 0; margin-bottom: 0; margin-top: 2em;}
+		p.paginationlist {padding-top: 0; margin-top: 0.5em; line-height: 1.8em;}
+		p.paginationlist span {display: none;}
+		p.paginationlist a {color: #333;}
+		p.paginationlist a, p.paginationlist strong {padding: 1px 5px; border: 1px solid #ccc;}
+		p.paginationlist strong {border-color: #333;}
+		p.paginationlist a.selected {background-color: #ddd;}
+		p.paginationlist a:hover {border-color: #6100c1; background-color: #f0e1ff; text-decoration: none;}
 		/* Icons */
 		a.action {padding: 10px; background-repeat: no-repeat; background-position: 4px center; padding: 3px 4px 3px 24px; white-space: no-wrap;}
 		a.button {background-color: #f7f7f7; border: 1px solid #ddd; -moz-border-radius: 3px; margin-right: 1px;}
