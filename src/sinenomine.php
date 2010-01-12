@@ -1,14 +1,14 @@
 <?php
 
 #!# Joins to empty tables seem to revert to a standard input field rather than an empty SELECT list
-#!# Create pagination UI
 #!# Need to test data object editing version
 #!# How are unknown field types dealt with?
-#!# Description being wrongly styled, at: http://sinenomine.dnsalias.net/labs/equipment/1/edit.html
-#!# Deal with uploads, e.g. http://sinenomine.dnsalias.net/labs/equipment/1/edit.html
-#!# Password field is not editable, e.g. http://sinenomine.dnsalias.net/alumni/contacts/add.html
+#!# Password field is not editable, e.g. http://sinenomine.geog.cam.ac.uk/alumni/contacts/add.html
 #!# Timestamp is not visible when intelligence switched on
 #!# Ensure that BINARY values are not put into the HTML
+#!# User administration section
+#!# Need a nice API like $sinenomine->database->field->orderby('date');
+
 
 
 # Class to deal with generic table editing; called 'sineNomine' which means 'without a name' in recognition of the generic use of this class
@@ -20,15 +20,30 @@ class sinenomine
 	var $record = NULL;
 	var $databaseConnection = NULL;
 	var $user = NULL;
+	var $credentialsUser = false;
+	var $data = NULL;	// The data that can be retrieved from >process ()
 	var $html = '';
+	var $mainHtml = '';
+	var $includeOnly = array ();
+	var $exclude = array ();
+	var $attributes = array ();
+	var $orderby = array ();
+	var $direction = array ();
+	var $validation = array ();
+	
 	
 	# Specify available arguments as defaults or as NULL (to represent a required argument)
 	var $defaults = array (
 		'hostname' => 'localhost',	// Whether to use internal logins
 		'vendor'	=> 'mysql',
+		'username'	=> false,	// Pre-supplied username
+		'password'	=> false,	// Pre-supplied password
+		'credentials' => array (),	// Credentials listings, as URL => file containing username and password; NB this is not database => $file because this assumes credentials are being passed on a Raven-protected page
 		'autoLogoutTime' => 1800,	// Number of seconds after which automatic logout will take place
 		'database' => false,
 		'table' => false,
+		'administrators' => array (),	// List of administrators
+		'userIsAdministrator' => false,	// Whether the user is an administrator (overrides list of administrators)
 		'baseUrl' => false,
 		'do' => 'do',	// $_GET['do'] or something else for the main action, e.g. 'action' would look at $_GET['action']; 'do' is the default as it is less likely to clash
 		'databaseUrlPart' => false,	// Whether to include the database in the URL *if* a database has been supplied in the settings
@@ -45,13 +60,15 @@ class sinenomine
 		'highlightMainTable'	=> true,	// Whether to make bold a table whose name is the same as the database
 		'listingsShowTotals'	=> true,	// Whether to show the total number of records in each table when listings
 		'attributes' => array (),
+		'orderby' => array (),	// Orderby default for a specific area
+		'direction' => array (),	// Direction default for a specific area
 		'exclude' => array (),
 		'validation' => array (),
 		'deny' => false,	// Deny edit access to database(s)/table(s)
 		'denyInformUser' => true,	// Whether to inform the user if a database/table is denied
 		'denyAdministratorOverride' => true,	// Whether to allow administrators access to denied database(s)/table(s)
-		'userIsAdministrator' => false,	// Whether the user is an administrator
 		'includeOnly' => array (),
+		'attributesSettingsPlaceholders' => true,	// Whether settings in attributes should have placeholder replacement
 		'nullText' => '',	// ultimateForm defaults
 		'cols' => 60,		// ultimateForm defaults
 		'rows' => 5,		// ultimateForm defaults
@@ -66,6 +83,7 @@ class sinenomine
 		'pagination' => 100,	// Whether to enable pagination, and if so, maximum records per max
 		'paginationRedirect'	 => true,	// Whether to enable redirects on selecting a page that does not exist (e.g. 10 pages, page 11 selected results in redirection to page 10)
 		'rewrite' => true,	// Whether mod_rewrite is on
+		'phpmyadmin' => false,	// The base of a PhpMyAdmin instance if links to equivalent pages are wanted
 	);
 	
 	
@@ -122,6 +140,26 @@ class sinenomine
 		# Start the HTML
 		$this->html  = $html;
 		
+		# Parse pre-supplied credentials files settings to inject these into the main settings
+		$errors = array ();	// Hack to cache this until the settings have been assigned, so that >error() doesn't produce offsets
+		if ($settings['credentials'] && is_array ($settings['credentials'])) {
+			foreach ($settings['credentials'] as $url => $credentialsFile) {
+				if (ereg ($url, $_SERVER['REQUEST_URI'])) {
+					if (is_readable ($credentialsFile)) {
+						include ($credentialsFile);
+						if (isSet ($credentials)) {
+							$settings = array_merge ($settings, $credentials);
+							$this->credentialsUser = true;
+						} else {
+							$errors[] = 'A credentials file was specified but did not contain syntactically-correct credentials settings.';
+						}
+					} else {
+						$errors[] = 'A credentials file was specified but could not be read.';
+					}
+				}
+			}
+		}
+		
 		# Merge in the arguments; note that $errors returns the errors by reference and not as a result from the method
 		if (!$this->settings = application::assignArguments ($errors, $settings, $this->defaults, __CLASS__, NULL, $handleErrors = true)) {
 			return false;
@@ -131,7 +169,7 @@ class sinenomine
 		$this->baseUrl = ($this->settings['baseUrl'] ? $this->settings['baseUrl'] : application::getBaseUrl ());
 		
 		# Determine the action to take, using the default (index) if none supplied
-		$this->action = (!isSet ($_GET[$this->settings['do']]) ? 'index' : (array_key_exists ($_GET[$this->settings['do']], $this->actions) ? $_GET[$this->settings['do']] : false));
+		$this->action = (!isSet ($_GET[$this->settings['do']]) ? 'index' : (array_key_exists ($_GET[$this->settings['do']], $this->actions) ? $_GET[$this->settings['do']] : NULL));
 		
 		# Define a logout URL and Determine whether to log out
 		$this->logoutUrl = $this->baseUrl . ($this->settings['rewrite'] ? $this->actions['logout']['url'] : str_replace ('%do', $this->settings['do'], $this->actions['logout']['urlQueryString']));
@@ -140,40 +178,79 @@ class sinenomine
 		# Define other URLs
 		$this->structureUrl = $this->baseUrl . ($this->settings['rewrite'] ? $this->actions['structure']['url'] : str_replace ('%do', $this->settings['do'], $this->actions['structure']['urlQueryString']));
 		
-		# In GUI mode, start a session to obtain credentials dynamically
-		if ($this->settings['gui'] && $databaseConnection === NULL) {
-			require_once ('session.php');
-			$session = new session ($this->settings, $logout);
-			
-			# Redirect to the front page if logged out, having destroyed the session
-			if ($logout) {
-				header ('Location: http://' . $_SERVER['SERVER_NAME'] . $this->baseUrl);
-				$mainHtml = "<p>You have been logged out. " . $this->createLink (NULL, NULL, NULL, NULL, 'Please click here to continue.') . '</p>';
-			} else {
-				$this->databaseConnection = $session->getDatabaseConnection ();
-				$this->user = $session->getUser ();
-				$mainHtml = $session->getHtml ();
+		# If credentials are supplied, use these in preference to session creation
+		if ($this->settings['hostname'] && $this->settings['username'] && $this->settings['password']) {
+			$this->databaseConnection = new database ($this->settings['hostname'], $this->settings['username'], $this->settings['password'], NULL, 'mysql', $this->settings['logfile']);
+			if (!$this->databaseConnection->connection) {
+				$this->databaseConnection = NULL;
+				$this->mainHtml = $this->error ('No valid database connection was supplied.');
 			}
-			
-		# Otherwise create a connection
 		} else {
-			if (!$databaseConnection || !$databaseConnection->connection) {
-				$mainHtml = $this->error ('No valid database connection was supplied.');
+			
+			# In GUI mode, start a session to obtain credentials dynamically
+			if ($this->settings['gui'] && $databaseConnection === NULL) {
+				require_once ('session.php');
+				$session = new session ($this->settings, $logout);
+				
+				# Redirect to the front page if logged out, having destroyed the session
+				if ($logout) {
+					header ('Location: http://' . $_SERVER['SERVER_NAME'] . $this->baseUrl);
+					$this->mainHtml = "<p>You have been logged out. " . $this->createLink (NULL, NULL, NULL, NULL, 'Please click here to continue.') . '</p>';
+				} else {
+					$this->databaseConnection = $session->getDatabaseConnection ();
+					$this->user = $session->getUser ();
+					$this->mainHtml = $session->getHtml ();
+				}
+				
+			# Otherwise create a connection
 			} else {
-				$this->databaseConnection = $databaseConnection;
+				if (!$databaseConnection || !$databaseConnection->connection) {
+					$this->databaseConnection = NULL;
+					$this->mainHtml = $this->error ('No valid database connection was supplied.');
+				} else {
+					$this->databaseConnection = $databaseConnection;
+				}
 			}
 		}
 		
+		# Determine if the user is an administrator
+		$this->userIsAdministrator = ($this->settings['userIsAdministrator'] || ($this->user && in_array ($this->user, $this->settings['administrators'])));
+		
 		# Set up all the logic and then cache the main page HTML
 		if ($this->databaseConnection) {
-			$mainHtml = $this->main ();
-			if ($this->settings['gui']) {$mainHtml = "\n\n\n\t<div id=\"content\">\n\n" . $mainHtml . "\n\t</div>";}
+			$this->mainHtml = $this->main ();
 		}
+		
+		# Create a link to the equivalent PHPMyAdmin page
+		$this->phpMyAdminUrl = NULL;
+		if ($this->userIsAdministrator && $this->settings['phpmyadmin']) {
+			$this->phpMyAdminUrl = $this->settings['phpmyadmin'];
+			if ($this->database) {
+				if ($this->table) {
+					$this->phpMyAdminUrl .= 'tbl_structure.php?goto=tbl_structure.php&amp;db=' . $this->doubleEncode ($this->database) . '&amp;table=' . $this->doubleEncode ($this->table);
+				} else {
+					$this->phpMyAdminUrl .= '?db=' . $this->doubleEncode ($this->database);
+				}
+			}
+		}
+	}
+	
+	
+	# Function which activates the processing, which must be called by the user
+	function process ()
+	{
+		# Take action
+		if ($this->databaseConnection && $this->action) {
+			$this->mainHtml .= $this->{$this->action} ();
+		}
+		
+		# Surround the mainHtml with a div
+		if ($this->settings['gui']) {$this->mainHtml = "\n\n\n\t<div id=\"content\">\n\n" . $this->mainHtml . "\n\t</div>";}
 		
 		# Build the HTML
 		$this->html .= $this->pageHeader ();
 		$this->html .= $this->pageMenu ();
-		$this->html .= $mainHtml;
+		$this->html .= $this->mainHtml;
 		$this->html .= $this->pageFooter ();
 		
 		# In GUI mode, show the HTML directly
@@ -181,9 +258,96 @@ class sinenomine
 			echo $this->html;
 		}
 		
-		//# Notional return value (HTML is passed by reference)
-		//return true;
+		# Return the raw data as an array
+		return $this->data;
 	}
+	
+	
+	# Function to accept attributes settings in the dataBinding
+	function attributes ($database = NULL, $table = NULL, $field = NULL, $settings = NULL)
+	{
+		# Replace settings with placeholders
+		if ($this->settings['attributesSettingsPlaceholders'] && $settings && is_array ($settings)) {
+			foreach ($settings as $key => $value) {
+				if (is_string ($value) && substr_count ($value, '%table')) {
+					$settings[$key] = str_replace ('%table', $this->table, $value);
+				}
+			}
+		}
+		
+		# Register the parameters
+		$this->register (__FUNCTION__, $database, $table, $field, $settings);
+	}
+	
+	
+	# Function to accept a default ordering for the table (overridablevia query string)
+	function orderby ($database = NULL, $table = NULL, $orderby = NULL)
+	{
+		# Disallow if not a string
+		if (!is_string ($orderby)) {return false;}
+		
+		# Register the parameters
+		$this->register (__FUNCTION__, $database, $table, $orderby);
+	}
+	
+	
+	# Function to accept direction settings (overridable via query string)
+	function direction ($database = NULL, $table = NULL, $direction = NULL)
+	{
+		# Disallow if not a string
+		if (!is_string ($direction)) {return false;}
+		
+		# Convert to uppercase
+		$direction = strtolower ($direction);
+		
+		# Register the value; ASC is not wrong but pointless as it is the default so is not set
+		if ($direction == 'desc') {
+			$this->register (__FUNCTION__, $database, $table, $direction);
+		}
+	}
+	
+	
+	# Function to accept includeOnly settings in the dataBinding
+	function includeOnly ($database = NULL, $table = NULL, $fields = NULL)
+	{
+		# Register the parameters
+		$this->register (__FUNCTION__, $database, $table, $fields);
+	}
+	
+	
+	# Function to accept exclude settings in the dataBinding
+	function exclude ($database = NULL, $table = NULL, $fields = NULL)
+	{
+		# Register the parameters
+		$this->register (__FUNCTION__, $database, $table, $fields);
+	}
+	
+	
+	# Function to deal with registering overrides
+	function register ($function, $database, $table, $field, $settings = NULL)
+	{
+		# Check parameters are all supplied
+		$setupOk = true;
+		if (!$database) {$this->html .= "<p>A database was not supplied</p>"; $setupOk = false;}
+		if (!$table) {$this->html .= "<p>A table was not supplied</p>"; $setupOk = false;}
+		if (!$field) {$this->html .= "<p>A fieldname was not supplied</p>"; $setupOk = false;}
+		if (($function == 'attributes') && (!$settings || !is_array ($settings))) {$this->html .= "<p>A set of settings was not supplied</p>"; $setupOk = false;}
+		
+		# End if parameters are wrong
+		if (!$setupOk) {
+#!# Throw error
+		}
+		
+		# Add the item to the registry if it matches the database and table
+		if ((($this->database == $database) || $database == '*') && (($this->table == $table) || ($table == '*'))) {
+			if ($function == 'attributes') {
+				$this->{$function}[$field] = $settings;
+			} else {
+				$this->{$function}[] = $field;
+			}
+		}
+	}
+	
 	
 	
 	# Function to set up the environment and take action
@@ -191,9 +355,6 @@ class sinenomine
 	{
 		# Start the HTML
 		$html  = '';
-		
-		# Determine if the user is an administrator
-		$this->userIsAdministrator = $this->settings['userIsAdministrator'];
 		
 		# Ensure any deny list is an array
 		$this->settings['deny'] = application::ensureArray ($this->settings['deny']);
@@ -236,15 +397,20 @@ class sinenomine
 			}
 		}
 		
+		# Allocate the databases list as the processing output
+		$this->data = $this->databases;
+		
 		# End if no editable databases
 		if (!$this->databases) {
 			$html .= "\n<p>There are no databases" . (($this->settings['denyInformUser'] && $deniedDatabases) ? ' that you can edit' : '') . " in the system, so this editor cannot be used.</p>";
+			$this->action = NULL;
 			return $html;
 		}
 		
 		# Run specific functions
 		if (isSet ($this->actions[$this->action]['administration'])) {
 			$html .= $this->{$this->action} ();
+			$this->action = NULL;
 			return $html;
 		}
 		
@@ -252,6 +418,7 @@ class sinenomine
 		if (!$this->settings['database'] && !isSet ($_GET['database'])) {
 			$html .= "\n<p>Please select a database:</p>";
 			$html .= $this->linklist ($this->databases);
+			$this->action = NULL;
 			return $html;
 		}
 		
@@ -262,6 +429,7 @@ class sinenomine
 		if ($this->settings['denyInformUser'] && in_array ($this->database, $deniedDatabases)) {
 			$html .= sprintf ("\n<p>Access to the database <em>%s</em> has been denied by the administrator.</p>", htmlspecialchars ($this->database));
 			$this->database = NULL;
+			$this->action = NULL;
 			return $html;
 		}
 		
@@ -270,6 +438,7 @@ class sinenomine
 			$this->database = NULL;
 			$html .= "\n<p>There is no such database. Please select one:</p>";
 			$html .= $this->linklist ($this->databases);
+			$this->action = NULL;
 			return $html;
 		}
 		
@@ -294,9 +463,13 @@ class sinenomine
 			}
 		}
 		
+		# Allocate the tables list as the processing output
+		$this->data = $this->tables;
+		
 		# Get the available tables for this database
 		if (!$this->tables) {
 			$html .= "\n<p>There are no tables" . (($this->settings['denyInformUser'] && $deniedTables) ? ' that you can edit' : '') . " in this database.</p>";
+			$this->action = NULL;
 			return $html;
 		}
 		
@@ -307,6 +480,7 @@ class sinenomine
 		if (!$this->settings['table'] && !isSet ($_GET['table'])) {
 			$html .= "\n<p>Please select a table (or add [+] a record):</p>";
 			$html .= $this->linklist ($this->database, $this->tables, false, $addAddLink = true, $this->settings['listingsShowTotals']);
+			$this->action = NULL;
 			return $html;
 		}
 		
@@ -317,6 +491,7 @@ class sinenomine
 		if ($this->settings['denyInformUser'] && in_array ($this->table, $deniedTables)) {
 			$html .= "\n<p>Access to the table <em>" . htmlspecialchars ($this->table) . '</em> in the database <em>' . $this->createLink ($this->database) . '</em> has been denied by the administrator.</p>';
 			$this->table = NULL;
+			$this->action = NULL;
 			return $html;
 		}
 		
@@ -325,6 +500,7 @@ class sinenomine
 			$this->table = NULL;
 			$html .= "\n<p>There is no such table. Please select one:</p>";
 			$html .= $this->linklist ($this->database, $this->tables);
+			$this->action = NULL;
 			return $html;
 		}
 		
@@ -339,7 +515,8 @@ class sinenomine
 		$this->tableStatus = $this->databaseConnection->getTableStatus ($this->database, $this->table);
 		
 		# Get the fields for this table
-		if (!$this->fields = $this->databaseConnection->getFields ($this->database, $this->table)) {
+		if (!$this->fields = $this->databaseConnection->getFields ($this->database, $this->table, true)) {
+			$this->action = NULL;
 			return $html .= $this->error ('There was some problem getting the fields for this table.');
 		}
 		
@@ -360,6 +537,7 @@ class sinenomine
 		# Get the unique field
 		#!# Is this error condition necessary?
 		if (!$this->key = $this->databaseConnection->getUniqueField ($this->database, $this->table, $this->fields)) {
+			$this->action = NULL;
 			return $html .= $this->error ('This table appears not to have a unique key field.');
 		}
 		
@@ -377,6 +555,7 @@ class sinenomine
 			if (!$this->data = $this->databaseConnection->selectOne ($this->database, $this->table, array ($this->key => $_GET['record']))) {
 				if ($this->action != 'add') {
 					$html .= "\n<p>There is no such record <em>" . htmlspecialchars ($_GET['record']) . '</em>. Did you intend to ' . $this->createLink ($this->database, $this->table, $_GET['record'], 'add', 'create a new record' . ($this->keyIsAutomatic ? '' : ' with that key'), 'action button add') . '?</p>';
+					$this->action = NULL;
 					return $html;
 				}
 			} else {
@@ -386,11 +565,10 @@ class sinenomine
 			}
 		}
 		
-		# Take action
+		# Adjust action for clone
 		if ($this->action == 'clone') {$this->action = 'cloneRecord';}	// 'clone' can't be used as a function name
-		$html .= $this->{$this->action} ();
 		
-		# Return the value
+		# Return the HTML
 		return $html;
 	}
 	
@@ -479,7 +657,7 @@ class sinenomine
 			
 			# Show the number of records in the table if wanted
 			#!# Ideally the bracketed section would have a span round it for styling
-			$total = ((is_array ($tables) && $listingsShowTotals) ? ' (' . $this->databaseConnection->getTotalRecords ($databases, $item) . ')' : false);
+			$total = ((is_array ($tables) && $listingsShowTotals) ? ' (' . $this->databaseConnection->getTotal ($databases, $item) . ')' : false);
 			
 			# Define the link for the current item
 			if (is_array ($databases)) {
@@ -519,10 +697,33 @@ class sinenomine
 		$html = '';
 		
 		# Determine the ordering, using a URL-supplied value if the fieldname exists
-		$descending = (isSet ($_GET['direction']) && ($_GET['direction'] == 'desc'));
+		$orderBy = $this->key;
+		#!# The apiOverrideInUseOrderBy needs to be used; at present it means that setting >orderby removes the ordering links for the $this->key field
+		$apiOverrideInUseOrderBy = false;
+		if (isSet ($_GET['orderby']) && array_key_exists ($_GET['orderby'], $this->fields)) {	// NB a _GET['orderby'] that is not valid is ignored so will not override an API-supplied orderby
+			$orderBy = $_GET['orderby'];
+		} else if ($this->orderby && array_key_exists ($this->orderby[0], $this->fields)) {	// i.e. if no URL value is specifically requested by the user but an 'orderby' is set by the API
+			$orderBy = $this->orderby[0];
+			$apiOverrideInUseOrderBy = true;	// Used to enable orderby=id in the link, which otherwise is never generated
+		}
+		
+		# Determine the direction
+		$descending = false;
+		$apiOverrideInUseDescending = false;
+		if (isSet ($_GET['direction'])) {
+			if ($_GET['direction'] == 'desc') {
+				$descending = true;
+			}
+		} else if ($this->direction) {	// i.e. if no URL value is specifically requested by the user but a 'direction' is set by the API
+			if ($this->direction[0] == 'desc') {
+				$descending = true;
+				$apiOverrideInUseDescending = true;	// Used to enable direction=asc in the link, which otherwise is never generated
+			}
+		}
 		$direction = ($descending ? ' DESC' : '');
-		$orderBy = ((isSet ($_GET['orderby']) && array_key_exists ($_GET['orderby'], $this->fields)) ? $_GET['orderby'] : $this->key);
-		$orderBySql = ((isSet ($_GET['orderby']) && array_key_exists ($_GET['orderby'], $this->fields)) ? "{$_GET['orderby']}{$direction},{$this->key}" : $this->key);
+		
+		# Compile the SQL for ORDER BY
+		$orderBySql = "{$orderBy}{$direction}" . (($orderBy != $this->key) ? ",{$this->key}" : '');
 		
 		# Determine whether to use pagination
 		$usePagination = ($this->settings['pagination'] && $fullView);
@@ -533,10 +734,12 @@ class sinenomine
 		$pageInUse = NULL;
 		$paginationSql = '';
 		$paginationHtml = '';
+		
+		$viewPageHtml = '';
 		if ($usePagination) {
 			
 			# Get a count of the data for pagination purposes
-			if (!$totalRecords = $this->databaseConnection->getTotalRecords ($this->database, $this->table)) {
+			if (!$totalRecords = $this->databaseConnection->getTotal ($this->database, $this->table)) {
 				$html .= "\n<p>There are no records in the <em>{$this->tableEntities}</em> table.</p>\n<p>You can " . $this->createLink ($this->database, $this->table, NULL, 'add', 'add a record', 'action button add') . '.</p>';
 				return $html;
 			}
@@ -576,19 +779,23 @@ class sinenomine
 					$pagesList[] = $this->createLink ($this->database, $this->table, NULL, NULL, NULL, ($i == $pageInUse ? 'selected' : NULL), $i, $linkArguments);
 				}
 				$pagesList[] = $this->createLink ($this->database, $this->table, NULL, NULL, 'All records', ($allRecords ? 'selected' : NULL), 'all');
+				$viewPageHtml = "\n<p class=\"paginationlist\">View page: " . implode (' <span>|</span> ', $pagesList) . '</p>';
+				
+				# Construct the HTML
 				$paginationHtml  = "\n<p class=\"paginationsummary\">Showing <strong>" . ($allRecords ? 'all records' : "page {$page} of {$totalPages}") . "</strong>" . ($allRecords ? '' : " (with max. {$limit} " . ($limit == 1 ? 'record' : 'records') . " per page)") . '.</p>';
-				$paginationHtml .= "\n<p class=\"paginationlist\">View page: " . implode (' <span>|</span> ', $pagesList) . '</p>';
+				$paginationHtml .= $viewPageHtml;
 			}
 		}
 		
 		# Get the data
-		$query = 'SELECT ' . ($fullView ? '*' : $this->key) . " FROM `{$this->database}`.`{$this->table}` ORDER BY {$orderBySql}{$direction}{$paginationSql};";
-		$data = $this->databaseConnection->getData ($query, "{$this->database}.{$this->table}");
-		$visibleRecords = count ($data);
+		$query = 'SELECT ' . ($fullView ? '*' : $this->key) . " FROM `{$this->database}`.`{$this->table}` ORDER BY {$orderBySql}{$paginationSql};";
+		$this->data = $this->databaseConnection->getData ($query, "{$this->database}.{$this->table}");
+		$visibleRecords = count ($this->data);
+		
 		
 		# Assign the count if pagination has not been set
 		if (!$usePagination) {
-			$totalRecords = count ($data);
+			$totalRecords = count ($this->data);
 		}
 		
 		# If there are no records, say so
@@ -599,7 +806,7 @@ class sinenomine
 		
 		# Convert join data
 		if ($this->settings['convertJoinsInView']) {
-			$data = $this->convertJoinData ($data, $this->fields, false, $this->joins);
+			$this->data = $this->convertJoinData ($this->data, $this->fields, false, $this->joins);
 		}
 		
 		# Start a table, adding in metadata in full-view mode
@@ -607,7 +814,7 @@ class sinenomine
 		
 		# Get the metadata names by taking the attributes of a known field, taking out unwanted fieldnames
 		#!# Need to deal with clashing keys (the metadata fieldnames could be the same as real data); possible solution is not to allocate row keys but instead just use []
-		if ($fullView) {
+		if ($fullView && $this->userIsAdministrator) {
 			
 			/*
 			# Flag whether there are any comments
@@ -652,7 +859,7 @@ class sinenomine
 		}
 		
 		# Assemble the data, starting with the links
-		foreach ($data as $key => $attributes) {
+		foreach ($this->data as $key => $attributes) {
 			$key = htmlspecialchars ($key);
 			$table[$key]['Record'] = '<strong>' . $this->createLink ($this->database, $this->table, $key, NULL, $attributes[$this->key], 'action view') . '</strong>';
 			if ($this->settings['showViewLink']) {
@@ -667,30 +874,34 @@ class sinenomine
 			# Add all the data in full view mode
 			if ($fullView) {
 				foreach ($attributes as $field => $value) {
-					$table[$key][$field] = str_replace (array ("\r\n", "\n"), '<br />', htmlspecialchars ($value));
+					$fieldname = $field . ' ' . $this->fields[$field]['_type'];	// Add the class to the underlying column key
+					$table[$key][$fieldname] = str_replace (array ("\r\n", "\n"), '<br />', htmlspecialchars ($value));
 				}
 			}
 		}
 		
 		# Convert fieldnames containing joins
-		if ($fullView) {
+// application::dumpData ($this->fields);
+/*
+		if ($fullView && $this->userIsAdministrator) {
 			foreach ($table['Field'] as $fieldname => $label) {
 				if (isSet ($this->fields[$fieldname]['_field'])) {
 					$table['Field'][$fieldname] = "<abbr title=\"{$label}\">{$this->fields[$fieldname]['_field']}</abbr>&nbsp;&raquo;<br />" . $this->createLink ($this->fields[$fieldname]['_targetDatabase'], $this->fields[$fieldname]['_targetTable'], NULL, NULL, NULL, NULL, NULL, NULL, true, $asHtmlNewWindow = true, $asHtmlTableIncludesDatabase = true);
 				}
 			}
 		}
+*/
 		
 		# Create the table headings and determine the link arguments
-		$headings = $this->headings;
-		foreach ($headings as $field => $visible) {
+		$headings = array ();
+		foreach ($this->headings as $field => $visible) {
 			
 			# Start a label string and an array of link arguments
-			$label  = $field;
+			$label  = (($this->settings['commentsAsHeadings'] && $this->fields[$field]['Comment']) ? $this->fields[$field]['Comment'] : (isSet ($this->fields[$field]['_field']) ? $this->fields[$field]['_field'] : $field));
 			$linkArguments = array ();
 			
 			# Add ordering to the link arguments if necessary
-			if ($this->key != $field) {
+			if ($field != $orderBy) {
 				$linkArguments['orderby'] = $field;
 			}
 			
@@ -698,6 +909,8 @@ class sinenomine
 			if ($field == $orderBy) {
 				if (!$descending) {
 					$linkArguments['direction'] = 'desc';
+				} else if ($apiOverrideInUseDescending) {
+					$linkArguments['direction'] = 'asc';
 				}
 				$nonBreakingSpace = chr(0xc2).chr(0xa0);	// See http://www.tachyonsoft.com/uc0000.htm#U00A0
 				$upArrow = chr(0xe2).chr(0x86).chr(0x91);	// See http://www.tachyonsoft.com/uc0021.htm#U2191
@@ -709,7 +922,8 @@ class sinenomine
 			$class = (($field == $orderBy) ? 'selected' : NULL);
 			
 			# Compile the link
-			$headings[$field] = $this->createLink ($this->database, $this->table, NULL, NULL, $label, $class, $pageInUse, $linkArguments);
+			$fieldname = $field . ' ' . $this->fields[$field]['_type'];	// Add the class to the underlying column key
+			$headings[$fieldname] = $this->createLink ($this->database, $this->table, NULL, NULL, $label, $class, $pageInUse, $linkArguments);
 		}
 		
 		# Compile the HTML
@@ -721,7 +935,14 @@ class sinenomine
 		// $html .= "\n" . '<!-- Enable table sortability: --><script language="javascript" type="text/javascript" src="http://www.geog.cam.ac.uk/sitetech/sorttable.js"></script>';
 		#!# Add line highlighting, perhaps using js
 		#!# Consider option to compress output using str_replace ("\n\t\t", "", $html) for big tables
-		$html .= application::htmlTable ($table, $headings, ($fullView ? 'sinenomine' : 'lines'), false, false, true, false, $addCellClasses = false, $addRowKeys = true, array (), $this->settings['compressWhiteSpace']);
+		$html .= application::htmlTable ($table, $headings, ($fullView ? 'sinenomine' : 'lines'), false, false, true, false, $addCellClasses = true, $addRowKeys = true, array (), $this->settings['compressWhiteSpace']);
+		
+		# Add the pagination links at the bottom of the page
+		if ($usePagination) {
+			if ($totalPages > 1) {
+				$html .= $viewPageHtml;
+			}
+		}
 		
 		# Show the table
 		return $html;
@@ -739,6 +960,7 @@ class sinenomine
 	# Function to show all records in a table in full
 	function listing ()
 	{
+		# Return the HTML
 		return $this->index ($fullView = false);
 	}
 	
@@ -802,17 +1024,23 @@ class sinenomine
 		# Pre-fill the data
 		$data = $this->data;
 		
+		# Set whether the key is editable
+		$keyAttributes['editable'] = (($action != 'edit') && !$this->keyIsAutomatic);
+		
 		# Prevent addition of a new record whose key already exists
 		if ($action == 'add') {
 			if ($data) {
 				$html .= "\n<p>You cannot add a record " . $this->createLink ($this->database, $this->table, $this->record, NULL, $this->record, 'action button view') . ' as it already exists. You can ' . $this->createLink ($this->database, $this->table, $this->record, 'clone', 'clone that record', 'action button clone') . ' or ' . $this->createLink ($this->database, $this->table, NULL, 'add', 'create a new record', 'action button add') . '.</p>';
 				return $html;
 			}
-			$data[$this->key] = (isSet ($_GET['record']) ? $_GET['record'] : '');
+			if (isSet ($_GET['record'])) {
+				$data[$this->key] = $_GET['record'];
+				$keyAttributes['editable'] = false;
+			}
 		}
 		
-		# Set whether the key is editable
-		$keyAttributes['editable'] = (($action != 'edit') && !$this->keyIsAutomatic);
+		# Get the attributes
+		$attributes = $this->attributes;
 		
 		# Deal with automatic keys (which will now be non-editable)
 		if (($action != 'edit') && $this->keyIsAutomatic) {
@@ -834,20 +1062,13 @@ class sinenomine
 			$data[$this->key] = NULL;
 		}
 		
-		# Determine the attributes
-		$attributes = $this->parseOverrides ($this->settings['attributes']);
-		$exclude = $this->parseOverrides ($this->settings['exclude']);
-		$includeOnly = $this->parseOverrides ($this->settings['includeOnly']);
-		$validation = $this->parseOverrides ($this->settings['validation']);
-		
-		# Merge in (override) the key handling
-		$attributes[$this->key] = $keyAttributes;
+		# Merge in the key handling, adding to anything explicitly supplied
+		$attributes[$this->key] = $keyAttributes + (array_key_exists ($this->key, $attributes) ? $attributes[$this->key] : array ());
 		
 		# Load and create a form
 		require_once ('ultimateForm.php');
 		$form = new form (array (
 			'databaseConnection' => $this->databaseConnection,
-			'developmentEnvironment' => ini_get ('display_errors'),
 			'displayRestrictions' => false,
 			'formCompleteText' => false,
 			'nullText' => $this->settings['nullText'],
@@ -862,19 +1083,23 @@ class sinenomine
 			'lookupFunction' => array ('database', 'lookup'),
 			'lookupFunctionParameters' => $this->settings['lookupFunctionParameters'],
 			'lookupFunctionAppendTemplate' => "<a href=\"{$this->baseUrl}/" . ($this->includeDatabaseUrlPart ? '%database/' : '') . "%table/\" class=\"noarrow\" title=\"Click here to open a new window for editing these values; then click on refresh.\" target=\"_blank\"> ...</a>%refresh",
-			'includeOnly' => $includeOnly,
-			'exclude' => $exclude,
+			'includeOnly' => $this->includeOnly,
+			'exclude' => $this->exclude,
 			'attributes' => $attributes,
 			'intelligence' => $this->settings['intelligence'],
 		));
 		
 		# Add validation rules
+		#!# Not yet working
 		#!# This is pretty nasty API stuff; perhaps allow a direct passing as $sinenomine->form->validation instead
-		if ($validation) {
+		if ($this->validation) {
 			foreach ($validation as $validationRule) {
 				$form->validation ($validationRule[0], $validationRule[1]);
 			}
 		}
+		
+		# Clear the data given that the form is not submitted
+		$this->data = NULL;
 		
 		# Process the form
 		if (!$record = $form->process ($html)) {
@@ -904,7 +1129,7 @@ class sinenomine
 			$this->recordLink = $this->createLink ($this->database, $this->table, $this->record, NULL, NULL, NULL, NULL, NULL, false);
 		}
 		
-		# (Re-)fetch the data
+		# (Re-)fetch the data and make it available to the output
 		$data = $this->databaseConnection->select ($this->database, $this->table, array ($this->key => $this->record));
 		$this->data = $data[$this->record];
 		
@@ -1169,8 +1394,6 @@ class sinenomine
 		require_once ('ultimateForm.php');
 		$form = new form (array (
 			'databaseConnection' => $this->databaseConnection,
-			'developmentEnvironment' => ini_get ('display_errors'),
-			'displayRestrictions' => false,
 			'formCompleteText' => false,
 			'nullText' => $this->settings['nullText'],
 			'div' => 'graybox',
@@ -1188,6 +1411,9 @@ class sinenomine
 		
 		# Show the record
 		$form->heading ('p', $this->record ($embed = true));
+		
+		# Clear the data given that the form is not submitted
+		$this->data = NULL;
 		
 		# Process the form
 		if (!$result = $form->process ($html)) {
@@ -1492,6 +1718,7 @@ class sinenomine
 		/* Header */
 		h1, h1 a, h1 a:visited {font-size: 1.4em; font-weight: normal; color: #bbb; text-decoration: none; margin-bottom: 0;}
 		p#logout {position: absolute; right: 0; top: 0; margin-right: 20px;}
+		p#phpmyadmin {position: absolute; right: 0; top: 2em; margin-right: 20px;}
 		/* Breadcrumb trail */
 		p.locationline {margin-top: 5px; margin-bottom: 2.4em;}
 		/* Lists */
@@ -1504,7 +1731,7 @@ class sinenomine
 		td.title {text-align: right; vertical-align: top;}
 		.error, .warning {color: red;}
 		.comment {color: gray;}
-		.restriction, .description {color: #999; font-style: italic;}
+		td.restriction, td.description {color: #999; font-style: italic;}
 		input, select, textarea, option, td.data label {color: #603;}
 		.maintable {font-weight: bold;}
 		.tallis {font-size: 16px; font-weight: bold; color: blue; filter: shadow(color=gold, strength=10); height: 30px;}
@@ -1520,6 +1747,7 @@ class sinenomine
 		table.sinenomine tr.Field td, table.sinenomine tr.Type td, table.sinenomine tr.Null td, table.sinenomine tr.Key td, table.sinenomine tr.Extra td, table.sinenomine tr.Privileges td, table.sinenomine tr.Comment td, table.sinenomine tr.Collation td, table.sinenomine tr.Default td {padding: 1px 4px; color: #777; font-size: 0.93em; vertical-align: top; text-align: left;}
 		table.sinenomine td.key a {display: block;}
 		table.sinenomine, table.lines {margin-top: 1.2em;}
+		table.sinenomine th.text {min-width: 300px;}
 		/* Lines table style */
 		table.lines {border-collapse: collapse; /* width: 95%; */}
 		.lines td, .lines th {border-bottom: 1px solid #e9e9e9; padding: 6px 4px 2px; vertical-align: top; text-align: left;}
@@ -1560,7 +1788,7 @@ class sinenomine
 		a.quicklist {background-image: url(/images/icons/application_side_list.png);}
 		a.view {background-image: url(/images/icons/magnifier.png);}	/* page_go.png */
 	</style>
-	<script language="javascript" type="text/javascript">
+	<script language="javascript" type="text/javascript"><!--
 		function setFocus() {
 			if (document.forms.length > 0) {
 				var field = document.forms[0];
@@ -1572,7 +1800,7 @@ class sinenomine
 				}
 			}
 		}
-	</script>
+	--></script>
 </head>
 <body onload="setFocus()">
 
@@ -1581,6 +1809,7 @@ class sinenomine
 	<div id="header">
 		<h1><a href="%baseUrl">sineNomine data editor</a></h1>
 		%logoutLink
+		%phpMyAdminLink
 		%breadcrumbTrail
 	</div>
 	
@@ -1593,6 +1822,7 @@ class sinenomine
 			'%baseUrl' => $this->baseUrl . '/',
 			'%refreshHtml' => ($this->user ? '<meta http-equiv="REFRESH" content="' . ($this->settings['autoLogoutTime'] + 5) . "; URL=" . htmlspecialchars ($_SERVER['REQUEST_URI']) . '" />' : ''),
 			'%logoutLink' => ($this->user ? '<p id="logout"><a href="' . $this->logoutUrl . '">[Logout]</a></p>' : ''),
+			'%phpMyAdminLink' => ($this->phpMyAdminUrl ? '<p id="phpmyadmin"><a href="' . $this->phpMyAdminUrl . '" target="_blank">[phpMyAdmin]</a></p>' : ''),
 			'%autoLogoutTime' => $this->settings['autoLogoutTime'] + 5,
 			'%breadcrumbTrail' => $this->breadcrumbTrail (),
 			'%position' => $this->position ($this->settings['hostnameInTitle']),
@@ -1610,6 +1840,9 @@ class sinenomine
 		# End if not in GUI mode
 		if (!$this->settings['gui']) {return false;}
 		
+		# End if no user
+		if (!$this->user && !$this->credentialsUser) {return false;}
+		
 		# Otherwise use the default header
 		$html = '
 		
@@ -1620,7 +1853,6 @@ class sinenomine
 	
 	</div>
 	
-</div>
 </body>
 </html>';
 		
