@@ -84,6 +84,7 @@ class sinenomine
 		'paginationRedirect'	 => true,	// Whether to enable redirects on selecting a page that does not exist (e.g. 10 pages, page 11 selected results in redirection to page 10)
 		'rewrite' => true,	// Whether mod_rewrite is on
 		'phpmyadmin' => false,	// The base of a PhpMyAdmin instance if links to equivalent pages are wanted
+		'queryTerm'	=> 'q',
 	);
 	
 	
@@ -114,6 +115,9 @@ class sinenomine
 		),
 		'delete' => array (
 			'description' => 'Delete a record',
+		),
+		'search' => array (
+			'description' => 'Search within records',
 		),
 		'structure' => array (
 			'description' => 'Database structure hierarchy',
@@ -691,7 +695,7 @@ class sinenomine
 	
 	
 	# Function to list an index of all records in a table, i.e. only the keys
-	function index ($fullView = true)
+	function index ($fullView = true, $data = false)
 	{
 		# Start the HTML
 		$html = '';
@@ -788,8 +792,12 @@ class sinenomine
 		}
 		
 		# Get the data
-		$query = 'SELECT ' . ($fullView ? '*' : $this->key) . " FROM `{$this->database}`.`{$this->table}` ORDER BY {$orderBySql}{$paginationSql};";
-		$this->data = $this->databaseConnection->getData ($query, "{$this->database}.{$this->table}");
+		if ($data) {
+			$this->data = $data;
+		} else {
+			$query = 'SELECT ' . ($fullView ? '*' : $this->key) . " FROM `{$this->database}`.`{$this->table}` ORDER BY {$orderBySql}{$paginationSql};";
+			$this->data = $this->databaseConnection->getData ($query, "{$this->database}.{$this->table}");
+		}
 		$visibleRecords = count ($this->data);
 		
 		
@@ -928,8 +936,11 @@ class sinenomine
 		
 		# Compile the HTML
 		$totalFields = count ($this->fields);
-		$html .= "\n<p>This table, " . $this->createLink ($this->database) . ".{$this->tableEntities}, contains a total of <strong>" . ($totalRecords == 1 ? 'one record' : "{$totalRecords} records") . '</strong> (each with ' . ($totalFields == 1 ? 'one field' : "{$totalFields} fields") . '), ' . ($allRecords ? 'with <strong>' . ($totalRecords == 1 ? 'this record' : 'all records') : 'of which <strong>' . ($visibleRecords == 1 ? 'one record is' : "{$visibleRecords} records are")) . ' listed below</strong>. You can switch to ' . ($fullView ? $this->createLink ($this->database, $this->table, NULL, 'listing', 'quick index', 'action button quicklist') . ' mode.' : $this->createLink ($this->database, $this->table, NULL, NULL, 'full-entry view', 'action button list') . ' (default) mode.') . '</p>';
-		$html .= "\n<p>You can also " . $this->createLink ($this->database, $this->table, NULL, 'add', 'add a record', 'action button add') . '.</p>';
+		if (!$data) {	// Do not add text when data has been pre-supplied
+			$html .= "\n<p>This table, " . $this->createLink ($this->database) . ".{$this->tableEntities}, contains a total of <strong>" . ($totalRecords == 1 ? 'one record' : "{$totalRecords} records") . '</strong> (each with ' . ($totalFields == 1 ? 'one field' : "{$totalFields} fields") . '), ' . ($allRecords ? 'with <strong>' . ($totalRecords == 1 ? 'this record' : 'all records') : 'of which <strong>' . ($visibleRecords == 1 ? 'one record is' : "{$visibleRecords} records are")) . ' listed below</strong>. You can switch to ' . ($fullView ? $this->createLink ($this->database, $this->table, NULL, 'listing', 'quick index', 'action button quicklist') . ' mode.' : $this->createLink ($this->database, $this->table, NULL, NULL, 'full-entry view', 'action button list') . ' (default) mode.') . '</p>';
+			$html .= "\n<p>You can also " . $this->createLink ($this->database, $this->table, NULL, 'add', 'add a record', 'action button add') . '.</p>';
+			$html .= $this->searchBox (false);
+		}
 		$html .= $paginationHtml;
 		#!# Enable sortability
 		// $html .= "\n" . '<!-- Enable table sortability: --><script language="javascript" type="text/javascript" src="http://www.geog.cam.ac.uk/sitetech/sorttable.js"></script>';
@@ -1141,6 +1152,119 @@ class sinenomine
 		#!# Replace this with the proper way of doing this
 		if ($this->settings['refreshSeconds']) {
 			$html .= "\n<meta http-equiv=\"refresh\" content=\"{$this->settings['refreshSeconds']};url={$this->tableLink}\">";
+		}
+		
+		# Return the HTML
+		return $html;
+	}
+	
+	
+	# Search facility
+	private function search ()
+	{
+		# Heading and form
+		$html  = "<div class=\"graybox\">";
+		$html .= $this->searchBox (false);
+		$html .= "</div>\n<br />";
+		
+		# Create the results if a query is supplied
+		if ($query = (isSet ($_GET[$this->settings['queryTerm']]) ? trim ($_GET[$this->settings['queryTerm']]) : '')) {
+			$html .= $this->searchResults ($query);
+		}
+		
+		# Show the HTML
+		return $html;
+	}
+	
+	
+	# Function to create the search box
+	private function searchBox ($minisearch = false)
+	{
+		$defaultText = 'Search';
+		$query = (isSet ($_GET[$this->settings['queryTerm']]) ? trim ($_GET[$this->settings['queryTerm']]) : $defaultText);
+		$target = $this->createLink ($this->database, $this->table, $record = NULL, $action = 'search', NULL, NULL, NULL, false, $asHtml = false);
+		return "\n\n" . '<form method="get" action="' . $target . '" class="' . ($minisearch ? 'minisearch' : 'search') . '" name="' . ($minisearch ? 'minisearch' : 'search') . '">
+			<img src="/images/icons/magnifier.png" alt="" class="icon"> <input name="' . $this->settings['queryTerm'] . '" type="text" size="' . ($minisearch ? '20' : '45') . '" value="' . $query . '" onfocus="if(this.value == \'' . $defaultText . '\'){this.value = \'\';}this.className=\'focused\';" onblur="if(this.value == \'\'){this.value = \'' . $defaultText . '\';this.className=\'blurred\';}" />&nbsp;<input value="Search!" accesskey="s" type="submit" class="button" />' /* . ($minisearch ? '' : " <span class=\"small\">&nbsp;[<a href=\"{$this->baseUrl}/search/\">Advanced search</a></span>]") */ . '
+		</form>' . "\n";
+	}
+	
+	
+	# Function to provide search results
+	private function searchResults ($searchPhrase)
+	{
+		# Escape the query for use in the SQL
+		$searchPhraseEscaped = $this->databaseConnection->escape ($searchPhrase);
+		
+		# Construct field match extracts; see also ultimateForm.php::dataBinding() which contains some useful pointers
+		$matchesSql = array ();
+		foreach ($this->fields as $field => $attributes) {
+			switch (true) {
+				
+				# VARCHAR text
+				case (preg_match ('/^(char|varchar)/i', $attributes['Type'])):
+					$matchesSql[$field] = "`{$field}` LIKE '%{$searchPhraseEscaped}%'";
+					break;
+					
+				# Full-text
+				/*
+				case (preg_match ('/^(text|mediumtext|blob)/i', $attributes['Type'])):
+					$matchesSql[$field] = "MATCH({$field}) AGAINST ('{$searchPhraseEscaped}')";
+					break;
+				*/
+				case (preg_match ('/^(text|mediumtext)/i', $attributes['Type'])):
+					$matchesSql[$field] = "`{$field}` LIKE '%{$searchPhraseEscaped}%'";
+					break;
+					
+				# Enumerated list
+				case (preg_match ('/^(enum)/i', $attributes['Type'])):
+					$matchesSql[$field] = "`{$field}` = '{$searchPhraseEscaped}'";
+					break;
+					
+				# Sets
+				case (preg_match ('/^(set)/i', $attributes['Type'])):
+					$matchesSql[$field] = "FIND_IN_SET('{$searchPhraseEscaped}',{$field}) > 0";
+					break;
+					
+				# Floating-point numbers
+				case (preg_match ('/^(float)/i', $attributes['Type']) && is_numeric ($searchPhrase)):
+					$matchesSql[$field] = "`{$field}` = '{$searchPhraseEscaped}'";
+					break;
+					
+				# Integer types, including years
+				case (preg_match ('/^(int|tinyint|smallint|mediumint|bigint|year)/i', $attributes['Type']) && is_int ($searchPhrase)):
+					$matchesSql[$field] = "`{$field}` = '{$searchPhraseEscaped}'";
+					break;
+					
+				# Dates
+				case (preg_match ('/^(time|date|datetime|timestamp)/i', $attributes['Type'])):
+					#!# Not yet implemented
+					break;
+					
+				# Unknown field types have no implementation
+				default:
+			}
+		}
+		
+		# Compile the matches SQL extracts
+		$matchesSql = "\n(" . implode (")\n\t\t\tOR (", $matchesSql) . ')';
+		
+		# Construct a query
+		#!# Currently doesn't support joins
+		$query = "SELECT * FROM {$this->database}.{$this->table} WHERE {$matchesSql};";
+		
+		# Get the data
+		if (!$data = $this->databaseConnection->getData ($query, "{$this->database}.{$this->table}")) {
+			$html = "<p>\nSorry, no items were found.</p>";
+		} else {
+			
+			# Convert the results to a table
+			$this->settings['pagination'] = false;
+			$table = $this->index (true, $data);
+			
+			# Compile the HTML
+			$records = count ($data);
+			$html  = "\n<p>Matching text for '<strong>" . htmlspecialchars ($searchPhrase) . "</strong>' was found in <strong>" . ($records == 1 ? 'one entry' : "{$records} entries") . '</strong> in the ' . $this->createLink ($this->database, $this->table, NULL, NULL, NULL, 'action button list') . ' table:</p>';
+			$html .= $table;
 		}
 		
 		# Return the HTML
@@ -1786,7 +1910,7 @@ class sinenomine
 		a.edit {background-image: url(/images/icons/page_white_edit.png);}
 		a.list {background-image: url(/images/icons/application_view_detail.png);}
 		a.quicklist {background-image: url(/images/icons/application_side_list.png);}
-		a.view {background-image: url(/images/icons/magnifier.png);}	/* page_go.png */
+		a.view {background-image: url(/images/icons/page.png);}
 	</style>
 	<script language="javascript" type="text/javascript"><!--
 		function setFocus() {
