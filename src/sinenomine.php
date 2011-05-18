@@ -869,7 +869,7 @@ class sinenomine
 		# Assemble the data, starting with the links
 		foreach ($this->data as $key => $attributes) {
 			$key = htmlspecialchars ($key);
-			$table[$key]['Record'] = '<strong>' . $this->createLink ($this->database, $this->table, $key, NULL, $attributes[$this->key], 'action view') . '</strong>';
+			$table[$key]['Record'] = '<strong>' . $this->createLink ($this->database, $this->table, $key, NULL, NULL, 'action view') . '</strong>';
 			if ($this->settings['showViewLink']) {
 				$table[$key]['View'] = $this->createLink ($this->database, $this->table, $key, NULL, 'View', 'action view');
 			}
