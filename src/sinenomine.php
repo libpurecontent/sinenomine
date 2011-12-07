@@ -52,6 +52,7 @@ class sinenomine
 		'gui' => false,	// Whether to add GUI features rather than just be an embedded component
 		'headerHtml' => false,	// Specific header HTML (rather than the default); ignored in non-GUI mode
 		'footerHtml' => false,	// Specific footer HTML (rather than the default); ignored in non-GUI mode
+		'showMetadata' => true,	// Whether the metadata fields at the top of table view are visible
 		'excludeMetadataFields' => array ('Field', /*'Collation', 'Default',*/'Privileges'),
 		'commentsAsHeadings' => true,	// Whether to use comments as headings if there are any comments
 		'convertJoinsInView' => true,	// Whether to convert joins when viewing a table
@@ -85,6 +86,9 @@ class sinenomine
 		'rewrite' => true,	// Whether mod_rewrite is on
 		'phpmyadmin' => false,	// The base of a PhpMyAdmin instance if links to equivalent pages are wanted
 		'queryTerm'	=> 'q',
+		'hideTableIntroduction'	=> false,	// Hide text "This table, X.Y., contains ..." and "You can [+ add a record]"
+		'fieldFiltering' => true,	// Whether to enable the field filtering interface; either true/false or string database.table.field for storage of the user data
+		'tableCommentsInSelectionList' => false,	// Whether the table comments should be shown in a table selection list (rather than the table name itself)
 	);
 	
 	
@@ -125,6 +129,10 @@ class sinenomine
 			'url' => '/structure.html',
 			'urlQueryString' => '/?%do=structure',
 		),
+		'overflow' => array (
+			'description' => 'Integer fields nearing overflow',
+			'administration' => true,
+		),
 	);
 	
 	
@@ -146,7 +154,7 @@ class sinenomine
 		
 		# Parse pre-supplied credentials files settings to inject these into the main settings
 		$errors = array ();	// Hack to cache this until the settings have been assigned, so that >error() doesn't produce offsets
-		if ($settings['credentials'] && is_array ($settings['credentials'])) {
+		if (isSet ($settings['credentials']) && $settings['credentials'] && is_array ($settings['credentials'])) {
 			foreach ($settings['credentials'] as $url => $credentialsFile) {
 				if (ereg ($url, $_SERVER['REQUEST_URI'])) {
 					if (is_readable ($credentialsFile)) {
@@ -188,7 +196,9 @@ class sinenomine
 			if (!$this->databaseConnection->connection) {
 				$this->databaseConnection = NULL;
 				$this->mainHtml = $this->error ('No valid database connection was supplied.');
+				// $this->databaseConnection->reportError ($this->defaults['administratorEmail'], 'sineNomine');
 			}
+			$this->user = $_SERVER['REMOTE_USER'];
 		} else {
 			
 			# In GUI mode, start a session to obtain credentials dynamically
@@ -453,6 +463,9 @@ class sinenomine
 		# Get the available tables for this database
 		$this->tables = $this->databaseConnection->getTables ($this->database);
 		
+		# Get the table comments
+		$this->tableComments = $this->getTableComments ($this->database);
+		
 		# Make a list of denied tables in this database and remove them from the list of available tables
 		$deniedTables = array ();
 		if ($this->settings['deny'] && is_array ($this->settings['deny']) && isSet ($this->settings['deny'][$this->database]) && $this->settings['deny'][$this->database]) {
@@ -482,8 +495,15 @@ class sinenomine
 		
 		# Ensure a table is supplied
 		if (!$this->settings['table'] && !isSet ($_GET['table'])) {
+			$tables = $this->tables;
+			if ($this->settings['tableCommentsInSelectionList']) {
+				$tables = array ();
+				foreach ($this->tables as $index => $table) {
+					$tables[$table] = (isSet ($this->tableComments[$table]) && strlen ($this->tableComments[$table]) ? $this->tableComments[$table] : $table);
+				}
+			}
 			$html .= "\n<p>Please select a table (or add [+] a record):</p>";
-			$html .= $this->linklist ($this->database, $this->tables, false, $addAddLink = true, $this->settings['listingsShowTotals']);
+			$html .= $this->linklist ($this->database, $tables, false, $addAddLink = true, $this->settings['listingsShowTotals']);
 			$this->action = NULL;
 			return $html;
 		}
@@ -653,11 +673,20 @@ class sinenomine
 	function linklist ($databases, $tables = NULL, $current = false, $addAddLink = false, $listingsShowTotals = false, $tabs = 1)
 	{
 		# Determine which is being looped through (databases or tables)
-		$items = (is_array ($databases) ? $databases : $tables);
+		$isDatabases = (is_array ($databases));
+		$items = ($isDatabases ? $databases : $tables);
 		
 		# Create the links
 		$list = array ();
-		foreach ($items as $index => $item) {
+		foreach ($items as $indexOrKey => $value) {
+			
+			# Determine the real name of the item (e.g. the table name) and the label
+			$item = $value;
+			$label = $value;
+			if (!$isDatabases && $this->settings['tableCommentsInSelectionList']) {
+				$item = $indexOrKey;
+				$label = "{$value} [{$item}]";
+			}
 			
 			# Show the number of records in the table if wanted
 			#!# Ideally the bracketed section would have a span round it for styling
@@ -670,8 +699,7 @@ class sinenomine
 			} else {
 				$class  = ($item == $this->table ? 'current' : false);
 				if ($this->settings['highlightMainTable'] && ($item == $this->database)) {$class .= ($class ? ' ' : '') . 'maintable';}
-				$label = $item;
-				$link = $this->createLink ($databases, $item, NULL, NULL, $item . $total, NULL, NULL, $class);
+				$link = $this->createLink ($databases, $item, NULL, NULL, $label . $total, NULL, NULL, $class);
 			}
 			
 			# Add an [+] link afterwards if wanted
@@ -683,7 +711,7 @@ class sinenomine
 			}
 			
 			# Add the item to the list
-			$list[$index] = $link;
+			$list[] = $link;
 		}
 		
 		# Create the list
@@ -817,12 +845,16 @@ class sinenomine
 			$this->data = $this->convertJoinData ($this->data, $this->fields, false, $this->joins);
 		}
 		
+		# Determine the visible fields
+		$totalFieldsUnfiltered = count ($this->fields);
+		$filterFieldsHtml = $this->filterFields ();
+		
 		# Start a table, adding in metadata in full-view mode
 		$table = array ();
 		
 		# Get the metadata names by taking the attributes of a known field, taking out unwanted fieldnames
 		#!# Need to deal with clashing keys (the metadata fieldnames could be the same as real data); possible solution is not to allocate row keys but instead just use []
-		if ($fullView && $this->userIsAdministrator) {
+		if ($fullView && $this->settings['showMetadata'] /* && $this->userIsAdministrator */) {
 			
 			/*
 			# Flag whether there are any comments
@@ -840,7 +872,7 @@ class sinenomine
 			foreach ($metadataFields as $metadataField) {
 				
 				# Skip join fields
-				if (ereg ('^_', $metadataField)) {continue;}
+				if (preg_match ('/^_/', $metadataField)) {continue;}
 				
 				$table[$metadataField] = array ($metadataField . ':', '', '', '',); // Placeholders against the starting Record/View/edit/clone/delete link headings
 				if ($this->settings['showViewLink']) {$table[$metadataField][] = '';}
@@ -882,6 +914,7 @@ class sinenomine
 			# Add all the data in full view mode
 			if ($fullView) {
 				foreach ($attributes as $field => $value) {
+					if (!isSet ($this->fields[$field])) {continue;}	// Skip non-visible fields
 					$fieldname = $field . ' ' . $this->fields[$field]['_type'];	// Add the class to the underlying column key
 					$table[$key][$fieldname] = str_replace (array ("\r\n", "\n"), '<br />', htmlspecialchars ($value));
 				}
@@ -902,7 +935,7 @@ class sinenomine
 		
 		# Create the table headings and determine the link arguments
 		$headings = array ();
-		foreach ($this->headings as $field => $visible) {
+		foreach ($this->fields as $field => $visible) {
 			
 			# Start a label string and an array of link arguments
 			$label  = (($this->settings['commentsAsHeadings'] && $this->fields[$field]['Comment']) ? $this->fields[$field]['Comment'] : (isSet ($this->fields[$field]['_field']) ? $this->fields[$field]['_field'] : $field));
@@ -937,11 +970,14 @@ class sinenomine
 		# Compile the HTML
 		$totalFields = count ($this->fields);
 		if (!$data) {	// Do not add text when data has been pre-supplied
-			$html .= "\n<p>This table, " . $this->createLink ($this->database) . ".{$this->tableEntities}, contains a total of <strong>" . ($totalRecords == 1 ? 'one record' : "{$totalRecords} records") . '</strong> (each with ' . ($totalFields == 1 ? 'one field' : "{$totalFields} fields") . '), ' . ($allRecords ? 'with <strong>' . ($totalRecords == 1 ? 'this record' : 'all records') : 'of which <strong>' . ($visibleRecords == 1 ? 'one record is' : "{$visibleRecords} records are")) . ' listed below</strong>. You can switch to ' . ($fullView ? $this->createLink ($this->database, $this->table, NULL, 'listing', 'quick index', 'action button quicklist') . ' mode.' : $this->createLink ($this->database, $this->table, NULL, NULL, 'full-entry view', 'action button list') . ' (default) mode.') . '</p>';
-			$html .= "\n<p>You can also " . $this->createLink ($this->database, $this->table, NULL, 'add', 'add a record', 'action button add') . '.</p>';
+			if (!$this->settings['hideTableIntroduction']) {
+				$html .= "\n<p>This table, " . $this->createLink ($this->database) . ".{$this->tableEntities}, contains a total of <strong>" . ($totalRecords == 1 ? 'one record' : "{$totalRecords} records") . '</strong> (each with ' . ($totalFields == 1 ? 'one field' : "{$totalFields} fields") . ($totalFields != $totalFieldsUnfiltered ? ' shown' : '') . '), ' . ($allRecords ? 'with <strong>' . ($totalRecords == 1 ? 'this record' : 'all records') : 'of which <strong>' . ($visibleRecords == 1 ? 'one record is' : "{$visibleRecords} records are")) . ' listed below</strong>. You can switch to ' . ($fullView ? $this->createLink ($this->database, $this->table, NULL, 'listing', 'quick index', 'action button quicklist') . ' mode.' : $this->createLink ($this->database, $this->table, NULL, NULL, 'full-entry view', 'action button list') . ' (default) mode.') . '</p>';
+				$html .= "\n<p>You can " . $this->createLink ($this->database, $this->table, NULL, 'add', 'add a record', 'action button add') . '.</p>';
+			}
 			$html .= $this->searchBox (false);
 		}
 		$html .= $paginationHtml;
+		$html .= $filterFieldsHtml;
 		#!# Enable sortability
 		// $html .= "\n" . '<!-- Enable table sortability: --><script language="javascript" type="text/javascript" src="http://www.geog.cam.ac.uk/sitetech/sorttable.js"></script>';
 		#!# Add line highlighting, perhaps using js
@@ -956,6 +992,97 @@ class sinenomine
 		}
 		
 		# Show the table
+		return $html;
+	}
+	
+	
+	# Function to enable the user to filter visible fields
+	public function filterFields ($unfilterableFields = array ('id'))
+	{
+		# If the field filtering UI is not enabled, just return the current fields
+		if (!$this->settings['fieldFiltering']) {return $this->fields;}
+		
+		# Get the fields in use, as well as determining the name of the middle field for display purposes
+		$checkboxes = array ();
+		$i = 0;
+		foreach ($this->fields as $field => $attributes) {
+			if ($field == $this->key) {continue;}
+			$checkboxes[$field] = $this->headings[$field];
+			$checkboxIndex[$i++] = $field;
+		}
+		$middleCheckboxNumber = ceil (count ($checkboxes) / 2) + 1;
+		$middleCheckbox = $checkboxIndex[$middleCheckboxNumber];
+		
+		# Determine whether to save state; note that this only supports a single table
+		$stateSaving = false;
+		if (is_string ($this->settings['fieldFiltering'])) {
+			$separator = '.';
+			if (substr_count ($this->settings['fieldFiltering'], $separator) == 4) {	// i.e. database.table.userfield.username.statefield
+				$stateSaving = array ();
+				list ($stateSaving['database'], $stateSaving['table'], $stateSaving['userfield'], $stateSaving['username'], $stateSaving['statefield']) = explode ($separator, $this->settings['fieldFiltering']);
+			}
+		}
+		
+		# Get the initial state if required
+		$showFields = array_keys ($this->fields);
+		if ($stateSaving) {
+			if ($state = $this->databaseConnection->selectOne ($stateSaving['database'], $stateSaving['table'], array ($stateSaving['userfield'] => $stateSaving['username']), array ($stateSaving['statefield']))) {
+				if ($state[$stateSaving['statefield']]) {	// If empty, show all fields
+					$showFields = explode (',', $state[$stateSaving['statefield']]);
+				}
+			}
+		}
+		
+		# Ensure there are no non-existent fields (which can cause the form not to display)
+		$showFields = array_intersect ($showFields, array_keys ($checkboxes));
+		
+		# Start the HTML
+		$html  = '';
+		
+		# Create the form
+		require_once ('ultimateForm.php');
+		$form = new form (array (
+			'databaseConnection' => $this->databaseConnection,
+			'displayRestrictions' => false,
+			'formCompleteText' => false,
+			'reappear' => true,
+			'display' => 'paragraphs',
+			'requiredFieldIndicator' => false,
+			'div' => 'limitfields',
+			'name' => 'limitfields',
+			'submitButtonText' => 'Filter!',
+		));
+		$form->checkboxes (array (
+			'name' => 'fields',
+			'title' => '<strong>Show fields</strong>',
+			'required' => false,
+			'values' => $checkboxes,
+			'default' => $showFields,
+			'columns' => 5,
+		));
+		if ($result = $form->process ($html)) {
+			$showFields = array ();
+			foreach ($result['fields'] as $field => $checked) {
+				if ($checked) {
+					$showFields[] = $field;
+				}
+			}
+		}
+		
+		# Obtain the checked checkboxes
+		foreach ($checkboxes as $field => $label) {
+			if (!in_array ($field, $showFields)) {
+				unset ($this->fields[$field]);
+			}
+		}
+		
+		# Write the new fields into the state storage if required
+		if ($stateSaving) {
+			$newState = implode (',', array_keys ($this->fields));
+			$this->databaseConnection->update ($stateSaving['database'], $stateSaving['table'], array ($stateSaving['statefield'] => $newState), array ($stateSaving['userfield'] => $stateSaving['username']));
+		}
+		
+		# Return the HTML
 		return $html;
 	}
 	
@@ -1053,6 +1180,17 @@ class sinenomine
 		# Get the attributes
 		$attributes = $this->attributes;
 		
+		# In editing mode (i.e. where the key value is known - NB adding is handled below), when requiring a forcedFileName, if %id has been set, replace with the key value
+		if ($action == 'edit') {
+			foreach ($attributes as $key => $widgetAttributes) {
+				if (isSet ($widgetAttributes['forcedFileName'])) {
+					if ($widgetAttributes['forcedFileName'] == '%id') {
+						$attributes[$key]['forcedFileName'] = $data[$this->key];	// NB This means that only one field can have an upload for the set folder; however, this is correct logic, as otherwise they would overwrite each other anyway
+					}
+				}
+			}
+		}
+		
 		# Deal with automatic keys (which will now be non-editable)
 		if (($action != 'edit') && $this->keyIsAutomatic) {
 			#!# The first four values are a workaround for just placing the text '(automatically assigned)'
@@ -1063,9 +1201,15 @@ class sinenomine
 			$keyAttributes['values'] = array (1 => '(Automatically assigned)');	// The value '1' is used to ensure it always validates, whatever the field specification is
 		}
 		
-		# If adding or cloning, get current values to ensure that it cannot be re-entered
+		# If adding or cloning, get current values for the key (and any other fields with uniqueness on them) to ensure that it cannot be re-entered
 		if ($action == 'add' || $action == 'clone') {
-			$keyAttributes['current'] = $this->getCurrentKeys ();
+			$keyAttributes['current'] = $this->getCurrentValues ($this->key);
+		}
+		foreach ($this->fields as $fieldname => $fieldAttributes) {
+			if (strtolower ($fieldAttributes['Key']) == 'uni') {	// UNI for unique keys
+				$excludeCurrent = ($action == 'edit' ? $data[$fieldname] : false);
+				$attributes[$fieldname]['current'] = $this->getCurrentValues ($fieldname, $excludeCurrent);
+			}
 		}
 		
 		# If cloning, NULL out the key value if required
@@ -1086,6 +1230,7 @@ class sinenomine
 			'cols' => $this->settings['cols'],
 			'rows' => $this->settings['rows'],
 			'div' => 'graybox lines',
+			'submitButtonPosition' => 'both',	# Basically a workaround for when there is a refresh button (which then becomes the first 'submit' button, and thus the default action when pressing return)
 		));
 		$form->dataBinding (array (
 			'database' => $this->database,
@@ -1117,7 +1262,7 @@ class sinenomine
 			return $html;
 		}
 		
-		#!# VERY TEMPORARY HACK to get uploading working by flattening the output; basically a special 'database' output format is needed at ultimateForm level
+		#!# HACK to get uploading working by flattening the output; basically a special 'database' output format is needed at ultimateForm level
 		if ((isSet ($record['filename']) && isSet ($record['filename'][0]))) {$record['filename'] = $record['filename'][0];}
 		
 		#!# End here if no filename
@@ -1138,9 +1283,36 @@ class sinenomine
 			}
 			$this->recordEntities = htmlspecialchars ($this->record);
 			$this->recordLink = $this->createLink ($this->database, $this->table, $this->record, NULL, NULL, NULL, NULL, NULL, false);
+			
+			# For new records (i.e. not editing), when requiring a forcedFileName, if %id has been set, move the file (post-upload is the best we can do, since we don't know the ID until after the form has completed)
+			$formFieldsSpecification = $form->getSpecification ();
+			foreach ($attributes as $fieldname => $widgetAttributes) {
+				#!# Can get "Notice: Undefined index: id in sinenomine.php on line 1284", e.g. at /abstracts/data/instances/add.html
+				if ($formFieldsSpecification[$fieldname]['type'] == 'upload') {
+					if (isSet ($widgetAttributes['forcedFileName'])) {
+						if ($widgetAttributes['forcedFileName'] == '%id') {
+							$newlyUploadedFile = $widgetAttributes['directory'] . $record[$fieldname];
+							$extension = pathinfo ($newlyUploadedFile, PATHINFO_EXTENSION);
+							$newFilename = $this->record . '.' . $extension;
+							$moveTo = $widgetAttributes['directory'] . $newFilename;
+							
+							# Move the file
+							#!# Error handling of some kind - but question is how to report this
+							rename ($newlyUploadedFile, $moveTo);
+							
+							# Update the database to replace the key name from %id
+							$filenameChange = array ($fieldname => $newFilename);
+							$conditions = array ($this->key => $this->record, $fieldname => $record[$fieldname]);	// The current filename is also put into the conditions for safety
+							if (!$filenameResult = $this->databaseConnection->update ($this->database, $this->table, $filenameChange, $conditions)) {
+								return $html .= $this->error ();
+							}
+						}
+					}
+				}
+			}
 		}
 		
-		# (Re-)fetch the data and make it available to the output
+		# Read back the data and make it available to the output
 		$data = $this->databaseConnection->select ($this->database, $this->table, array ($this->key => $this->record));
 		$this->data = $data[$this->record];
 		
@@ -1180,11 +1352,12 @@ class sinenomine
 	# Function to create the search box
 	private function searchBox ($minisearch = false)
 	{
-		$defaultText = 'Search';
-		$query = (isSet ($_GET[$this->settings['queryTerm']]) ? trim ($_GET[$this->settings['queryTerm']]) : $defaultText);
+		$placeholderText = 'Search';
+		$query = (isSet ($_GET[$this->settings['queryTerm']]) ? trim ($_GET[$this->settings['queryTerm']]) : '');
 		$target = $this->createLink ($this->database, $this->table, $record = NULL, $action = 'search', NULL, NULL, NULL, false, $asHtml = false);
 		return "\n\n" . '<form method="get" action="' . $target . '" class="' . ($minisearch ? 'minisearch' : 'search') . '" name="' . ($minisearch ? 'minisearch' : 'search') . '">
-			<img src="/images/icons/magnifier.png" alt="" class="icon"> <input name="' . $this->settings['queryTerm'] . '" type="text" size="' . ($minisearch ? '20' : '45') . '" value="' . $query . '" onfocus="if(this.value == \'' . $defaultText . '\'){this.value = \'\';}this.className=\'focused\';" onblur="if(this.value == \'\'){this.value = \'' . $defaultText . '\';this.className=\'blurred\';}" />&nbsp;<input value="Search!" accesskey="s" type="submit" class="button" />' /* . ($minisearch ? '' : " <span class=\"small\">&nbsp;[<a href=\"{$this->baseUrl}/search/\">Advanced search</a></span>]") */ . '
+			<img src="/images/icons/magnifier.png" alt="" class="icon">
+			<input name="' . $this->settings['queryTerm'] . '" type="text" size="' . ($minisearch ? '20' : '45') . '" value="' . $query . '" placeholder="' . $placeholderText . '" />&nbsp;<input value="Search!" accesskey="s" type="submit" class="button" />' /* . ($minisearch ? '' : " <span class=\"small\">&nbsp;[<a href=\"{$this->baseUrl}/search/\">Advanced search</a></span>]") */ . '
 		</form>' . "\n";
 	}
 	
@@ -1255,6 +1428,7 @@ class sinenomine
 		# Get the data
 		if (!$data = $this->databaseConnection->getData ($query, "{$this->database}.{$this->table}")) {
 			$html = "<p>\nSorry, no items were found.</p>";
+			$html .= "\n<p>Do you want to " . $this->createLink ($this->database, $this->table, NULL, 'add', 'add a record', 'action button add') . '?</p>';
 		} else {
 			
 			# Convert the results to a table
@@ -1272,15 +1446,21 @@ class sinenomine
 	}
 	
 	
-	# Function to get current key values
-	function getCurrentKeys ()
+	# Function to get current values (e.g. all the key numbers/names)
+	function getCurrentValues ($field, $exclude = false)
 	{
-		# Get the current keys
-		$query = "SELECT {$this->key} FROM {$this->database}.{$this->table} ORDER BY {$this->key}";
-		$keys = $this->databaseConnection->getPairs ($query);
+		# Add a WHERE clause if excluding
+		$where = '';
+		if ($exclude !== false) {
+			$where = " WHERE {$field} != " . $this->databaseConnection->quote ($exclude);
+		}
 		
-		# Return the keys
-		return $keys;
+		# Get the current values (often the list of keys)
+		$query = "SELECT {$field} FROM {$this->database}.{$this->table}{$where} ORDER BY {$field}";
+		$values = $this->databaseConnection->getPairs ($query);
+		
+		# Return the values (often the list of keys)
+		return $values;
 	}
 	
 	
@@ -1289,6 +1469,24 @@ class sinenomine
 	{
 		# Return the value
 		return $this->record;
+	}
+	
+	
+	# Function to get table comments (descriptions)
+	private function getTableComments ($database)
+	{
+		# Get the data
+		$query = "SHOW TABLE STATUS FROM `{$this->database}`";
+		$data = $this->databaseConnection->getData ($query);
+		
+		# Arrange as an associative array
+		$comments = array ();
+		foreach ($data as $table) {
+			$comments[$table['Name']] = $table['Comment'];
+		}
+		
+		# Return the comments
+		return $comments;
 	}
 	
 	
@@ -1562,6 +1760,96 @@ class sinenomine
 	}
 	
 	
+	# Function to check for integer fields nearing overflow
+	function overflow ($hideReservedTables = true, $checkPercentage = 75, $mail = false)
+	{
+		# List supported sizes, from http://dev.mysql.com/doc/refman/5.1/en/numeric-types.html
+		$ranges = array (
+			'tinyint\([0-9]+\)' => array (-128, 127),
+			'tinyint\([0-9]+\) unsigned' => array (0, 255),
+			'smallint\([0-9]+\)' => array (-32768, 32767),
+			'smallint\([0-9]+\) unsigned' => array (0, 65535),
+			'mediumint\([0-9]+\)' => array (-8388608, 8388607),
+			'mediumint\([0-9]+\) unsigned' => array (0, 16777215),
+			'int\([0-9]+\)' => array (-2147483648, 2147483647),
+			'int\([0-9]+\) unsigned' => array (0, 4294967295),
+			'bigint\([0-9]+\)' => array (-9223372036854775808, 9223372036854775807),
+			'bigint\([0-9]+\) unsigned' => array (0, 18446744073709551615),
+		);
+		
+		# Import from the settings a list of reserved databases for checking against
+		$databases = $this->databases;
+		
+		# Start a table of problematic fields
+		$problems = array ();
+		
+		# Get the list of databases and loop through them
+		foreach ($databases as $database) {
+			
+			# Create a list of tables and loop through them
+			$tables = $this->databaseConnection->getTables ($database);
+			foreach ($tables as $table) {
+				
+				# Create a list of tables and loop through them
+				$fields = $this->databaseConnection->getFields ($database, $table);
+				foreach ($fields as $fieldname => $field) {
+					
+					# Check for integer fields
+					if (substr_count (strtolower ($field['Type']), 'int(')) {
+						
+						# Match the field specification
+						foreach ($ranges as $specification => $range) {
+							if (preg_match ("/^{$specification}$/", strtolower ($field['Type']), $matches)) {
+								
+								# Get the highest (max) record for this
+								// $query = "SELECT `{$fieldname}` as highest FROM `{$database}`.`{$table}` ORDER BY `{$fieldname}` DESC LIMIT 1;";
+								$query = "SELECT MAX(`{$fieldname}`) as highest FROM `{$database}`.`{$table}`;";
+								$data = $this->databaseConnection->getOne ($query);
+								$highest = $data['highest'];
+								
+								# Compare
+								$slotsAvailable = $range[1] - $range[0];
+								if (($highest / $slotsAvailable) > ($checkPercentage / 100)) {
+									$problems[] = array (
+										'Database' => $database,
+										'Table' => $table,
+										'Field' => $fieldname,
+										'Specification' => $field['Type'],
+										'Range' => number_format ($range[0]) . ' to ' . number_format ($range[1]),
+										'Highest record' => number_format ($highest),
+										'Position in range' => round (($highest / $slotsAvailable) * 100) . '%',
+									);
+								}
+								
+								# Don't check for more ranges for this field
+								break;
+							}
+						}
+					}
+				}
+			}
+		}
+		
+		# Create the table
+		if ($problems) {
+			$html  = "\n<p>This list shows integer fields which are in danger of overflow (above {$checkPercentage}% of available slots).</p>";
+			$html .= application::htmlTable ($problems, array (), 'lines' . ($mail ? '" border="1' : ''), $keyAsFirstColumn = false);
+		} else {
+			$html  = "\n<p class=\"success\">No fields have been found which are in danger of overflow (above {$checkPercentage}% of available slots).</p>";
+		}
+		
+		# Mail the HTML table to a given e-mail address if required
+		if ($mail) {
+			if ($problems) {
+				application::utf8Mail ($mail, $this->actions[__FUNCTION__]['description'], $html, "From: {$mail}", NULL, 'text/html');
+			}
+		}
+		
+		# Return the HTML
+		return $html;
+	}
+	
+	
 	# Function to show a complete hierarchical listing of the database structure
 	#!# Privileges?
 	#!# Database limitation mode
@@ -1810,108 +2098,40 @@ class sinenomine
 <head>
 	<title>sineNomine database administrator%position</title>
 	%refreshHtml
-	<style type="text/css" media="screen">
-		/* Layout */
-		body {text-align: center;}
-		#container {margin-left: 10px; margin-right: 10px; text-align: left;}
-		#header {height: 5em; border-bottom: 1px solid #ddd; margin-bottom: 25px;}
-		#menu {float: left; width: 16em; overflow: auto; padding: 1px; margin-top: 0; margin-bottom: 1.4em;}
-		#content {margin-left: 18em;}
-		#footer {clear: both; border-top: 1px solid #ddd; margin-top: 30px;}
-		/* Body */
-		body, input, textarea, select, option, checkbox {font-family: verdana, arial, helvetica, sans-serif;}
-		/* Menu */
-		#menu ul {list-style: none; margin-left: 0; padding-left: 0;}
-		#menu ul li {margin-bottom: 2px; white-space: nowrap; padding: 0;}
-		#menu ul li a {margin: 0; color: gray; display: block; padding: 1px 2px 3px; /* border: 1px solid #eee;*/}
-		* html #menu ul li a {width: 100%;} /* IE6 fix */
-		#menu a:hover, #menu a.current:hover {background-color: #eee; text-decoration: none;}
-		#menu ul li a.current {color: #222; font-weight: bold; background-color: #eee; border-bottom: 1px solid #ccc;}
-		#menu ul li ul {margin-left: 15px; margin-bottom: 10px;}
-		#menu ul li ul li a {padding: 1px;}
-		#menu ul li ul li a.current {color: #222; font-weight: bold; background-color: #f7f7f7; border-bottom: 0;}
-		#menu ul li span.count {color: #999; font-weight: normal;}
-		/* Fonts - sizing uses technique at http://www.thenoodleincident.com/tutorials/typography/ */
-		body {font-size: 68%;}
-		input, textarea, select, option, checkbox {font-size: 1em;}
-		h1, h2, h3, h4, h5, h6 {color: #603; padding-bottom: 0; margin-bottom: 1em;}
-		h2 {font-size: 1.5em;}
-		/* Links */
-		a {text-decoration: none;}
-		a:hover {text-decoration: underline;}
-		/* Header */
-		h1, h1 a, h1 a:visited {font-size: 1.4em; font-weight: normal; color: #bbb; text-decoration: none; margin-bottom: 0;}
-		p#logout {position: absolute; right: 0; top: 0; margin-right: 20px;}
-		p#phpmyadmin {position: absolute; right: 0; top: 2em; margin-right: 20px;}
-		/* Breadcrumb trail */
-		p.locationline {margin-top: 5px; margin-bottom: 2.4em;}
-		/* Lists */
-		ul li {margin-top: 3px;}
-		ul.spaced li, li.spaced {margin-top: 12px;}
-		ul.normal li, li.normal {margin-top: 3px;}
-		/* Forms */
-		fieldset {border: 0; padding: 0;}
-		td {padding: 10px 2px 0;}
-		td.title {text-align: right; vertical-align: top;}
-		.error, .warning {color: red;}
-		.comment {color: gray;}
-		td.restriction, td.description {color: #999; font-style: italic;}
-		input, select, textarea, option, td.data label {color: #603;}
-		.maintable {font-weight: bold;}
-		.tallis {font-size: 16px; font-weight: bold; color: blue; filter: shadow(color=gold, strength=10); height: 30px;}
-		/* Summary table */
-		table.sinenomine {background-color: #fff; border: 1px solid #dcdcdc;}
-		table.sinenomine th, table.sinenomine td {padding: 4px 4px;}
-		table.sinenomine th, table.sinenomine th a {vertical-align: top; background-color: #7397dd; color: #fff; text-align: left;}
-		table.sinenomine th a {display: block;}
-		table.sinenomine th a.selected {background-color: #36c}
-		table.sinenomine th span.orderby {background-color: brown;}
-		table.sinenomine td {background-color: #ebeff4; border-bottom: 1px solid #dcdcdc;}
-		table.sinenomine tr:hover td {background-color: #eaeafa;}
-		table.sinenomine tr.Field td, table.sinenomine tr.Type td, table.sinenomine tr.Null td, table.sinenomine tr.Key td, table.sinenomine tr.Extra td, table.sinenomine tr.Privileges td, table.sinenomine tr.Comment td, table.sinenomine tr.Collation td, table.sinenomine tr.Default td {padding: 1px 4px; color: #777; font-size: 0.93em; vertical-align: top; text-align: left;}
-		table.sinenomine td.key a {display: block;}
-		table.sinenomine, table.lines {margin-top: 1.2em;}
-		table.sinenomine th.text {min-width: 300px;}
-		/* Lines table style */
-		table.lines {border-collapse: collapse; /* width: 95%; */}
-		.lines td, .lines th {border-bottom: 1px solid #e9e9e9; padding: 6px 4px 2px; vertical-align: top; text-align: left;}
-		/* .lines td:first-child, .lines th:first-child {width: 150px;} */
-		.lines tr:first-child {border-top: 1px solid #e9e9e9;}
-		.lines td h3 {text-align: left; padding-top: 20px;}
-		.lines p {text-align: left;}
-		.lines td.noline {border-bottom: 0;}
-		table.compressed td {padding: 0 4px;}
-		table.spaced td {padding: 8px 4px;}
-		table.alternate tr:nth-child(odd) td {background-color: #d8e7e9;}
-		table.lines.regulated td.key {width: 150px;}
-		.lines td.noline, table.noline td, table.lines.noline tr:first-child {border-bottom: 0; border-top: 0;}
-		table.rightkey td.key {text-align: right;}
-		/* Graybox */
-		div.graybox {border: 1px solid #ddd; padding: 10px 15px; margin: 0 10px 10px 0; background-color: #fcfcfc;}
-		div.graybox:hover {background-color: #fafafa; border-color: #aaa;}
-		div.graybox h2, div.graybox h3 {margin-top: 0.4em;}
-		div.graybox p {text-align: left; margin-top: 10px;}
-		/* Pagination */
-		p.paginationsummary {padding-bottom: 0; margin-bottom: 0; margin-top: 2em;}
-		p.paginationlist {padding-top: 0; margin-top: 0.5em; line-height: 1.8em;}
-		p.paginationlist span {display: none;}
-		p.paginationlist a {color: #333;}
-		p.paginationlist a, p.paginationlist strong {padding: 1px 5px; border: 1px solid #ccc;}
-		p.paginationlist strong {border-color: #333;}
-		p.paginationlist a.selected {background-color: #ddd;}
-		p.paginationlist a:hover {border-color: #6100c1; background-color: #f0e1ff; text-decoration: none;}
-		/* Icons */
-		a.action {padding: 10px; background-repeat: no-repeat; background-position: 4px center; padding: 3px 4px 3px 24px; white-space: no-wrap;}
-		a.button {background-color: #f7f7f7; border: 1px solid #ddd; -moz-border-radius: 3px; margin-right: 1px;}
-		a.button:hover {background-color: #fafafa; border-color: #aaa;}
-		a.add {background-image: url(/images/icons/add.png);}
-		a.clone {background-image: url(/images/icons/application_double.png);}
-		a.delete {background-image: url(/images/icons/cross.png);}
-		a.edit {background-image: url(/images/icons/page_white_edit.png);}
-		a.list {background-image: url(/images/icons/application_view_detail.png);}
-		a.quicklist {background-image: url(/images/icons/application_side_list.png);}
-		a.view {background-image: url(/images/icons/page.png);}
-	</style>
+		<style type="text/css" media="screen">
+			/* Layout */
+			body {text-align: center;}
+			#container {margin-left: 10px; margin-right: 10px; text-align: left;}
+			#header {height: 5em; border-bottom: 1px solid #ddd; margin-bottom: 25px;}
+			#menu {float: left; width: 16em; overflow: auto; padding: 1px; margin-top: 0; margin-bottom: 1.4em;}
+			#content {margin-left: 18em;}
+			#footer {clear: both; border-top: 1px solid #ddd; margin-top: 30px;}
+			/* Body */
+			body, input, textarea, select, option, checkbox {font-family: verdana, arial, helvetica, sans-serif;}
+			/* Menu */
+			#menu ul {list-style: none; margin-left: 0; padding-left: 0;}
+			#menu ul li {margin-bottom: 2px; white-space: nowrap; padding: 0;}
+			#menu ul li a {margin: 0; color: gray; display: block; padding: 1px 2px 3px; /* border: 1px solid #eee;*/}
+			* html #menu ul li a {width: 100%;} /* IE6 fix */
+			#menu a:hover, #menu a.current:hover {background-color: #eee; text-decoration: none;}
+			#menu ul li a.current {color: #222; font-weight: bold; background-color: #eee; border-bottom: 1px solid #ccc;}
+			#menu ul li ul {margin-left: 15px; margin-bottom: 10px;}
+			#menu ul li ul li a {padding: 1px;}
+			#menu ul li ul li a.current {color: #222; font-weight: bold; background-color: #f7f7f7; border-bottom: 0;}
+			#menu ul li span.count {color: #999; font-weight: normal;}
+			/* Fonts - sizing uses technique at http://www.thenoodleincident.com/tutorials/typography/ */
+			body {font-size: 68%;}
+			input, textarea, select, option, checkbox {font-size: 1em;}
+			h1, h2, h3, h4, h5, h6 {color: #603; padding-bottom: 0; margin-bottom: 1em;}
+			h2 {font-size: 1.5em;}
+			/* Header */
+			h1, h1 a, h1 a:visited {font-size: 1.4em; font-weight: normal; color: #bbb; text-decoration: none; margin-bottom: 0;}
+			p#logout {position: absolute; right: 0; top: 0; margin-right: 20px;}
+			p#phpmyadmin {position: absolute; right: 0; top: 2em; margin-right: 20px;}
+			/* Breadcrumb trail */
+			p.locationline {margin-top: 5px; margin-bottom: 2.4em;}
+	' . $this->getContentCss () . '
+		</style>
 	<script language="javascript" type="text/javascript"><!--
 		function setFocus() {
 			if (document.forms.length > 0) {
@@ -1954,6 +2174,94 @@ class sinenomine
 		$html = strtr ($html, $substitutions);
 		
 		# Return the header
+		return $html;
+	}
+	
+	
+	# Function to get the styles
+	public function getContentCss ($addSurroundingTags = false)
+	{
+		# Define the HTML
+		$html  = '
+			/* Links */
+			a {text-decoration: none;}
+			a:hover {text-decoration: underline;}
+			/* Lists */
+			ul li {margin-top: 3px;}
+			ul.spaced li, li.spaced {margin-top: 12px;}
+			ul.normal li, li.normal {margin-top: 3px;}
+			/* Forms */
+			fieldset {border: 0; padding: 0;}
+			td {padding: 10px 2px 0;}
+			td.title {text-align: right; vertical-align: top;}
+			.error, .warning {color: red;}
+			.comment {color: gray;}
+			input, select, textarea, option, td.data label {color: #603;}
+			.maintable {font-weight: bold;}
+			.tallis {font-size: 16px; font-weight: bold; color: blue; filter: shadow(color=gold, strength=10); height: 30px;}
+			/* Summary table */
+			table.sinenomine {background-color: #fff; border: 1px solid #dcdcdc;}
+			table.sinenomine th, table.sinenomine td {padding: 4px 4px;}
+			table.sinenomine th, table.sinenomine th a {vertical-align: top; background-color: #7397dd; color: #fff; text-align: left;}
+			table.sinenomine th a {display: block;}
+			table.sinenomine th a.selected {background-color: #36c}
+			table.sinenomine th span.orderby {background-color: brown;}
+			table.sinenomine td {background-color: #ebeff4; border-bottom: 1px solid #dcdcdc;}
+			table.sinenomine tr:hover td {background-color: #eaeafa;}
+			table.sinenomine tr.Field td, table.sinenomine tr.Type td, table.sinenomine tr.Null td, table.sinenomine tr.Key td, table.sinenomine tr.Extra td, table.sinenomine tr.Privileges td, table.sinenomine tr.Comment td, table.sinenomine tr.Collation td, table.sinenomine tr.Default td {padding: 1px 4px; color: #777; font-size: 0.93em; vertical-align: top; text-align: left;}
+			table.sinenomine td.key a {display: block;}
+			table.sinenomine, table.lines {margin-top: 1.2em;}
+			table.sinenomine th.text {min-width: 300px;}
+			/* Lines table style */
+			table.lines {border-collapse: collapse; /* width: 95%; */}
+			.lines td, .lines th {border-bottom: 1px solid #e9e9e9; padding: 6px 4px 2px; vertical-align: top; text-align: left;}
+			/* .lines td:first-child, .lines th:first-child {width: 150px;} */
+			.lines tr:first-child {border-top: 1px solid #e9e9e9;}
+			.lines td h3 {text-align: left; padding-top: 20px;}
+			.lines p {text-align: left;}
+			.lines td.noline {border-bottom: 0;}
+			table.compressed td {padding: 0 4px;}
+			table.spaced td {padding: 8px 4px;}
+			table.alternate tr:nth-child(odd) td {background-color: #d8e7e9;}
+			table.lines.regulated td.key {width: 150px;}
+			.lines td.noline, table.noline td, table.lines.noline tr:first-child {border-bottom: 0; border-top: 0;}
+			table.rightkey td.key {text-align: right;}
+			/* Graybox */
+			div.graybox {border: 1px solid #ddd; padding: 10px 15px; margin: 0 10px 10px 0; background-color: #fcfcfc;}
+			div.graybox:hover {background-color: #fafafa; border-color: #aaa;}
+			div.graybox h2, div.graybox h3 {margin-top: 0.4em;}
+			div.graybox p {text-align: left; margin-top: 10px;}
+			/* Pagination */
+			p.paginationsummary {padding-bottom: 0; margin-bottom: 0; margin-top: 2em;}
+			p.paginationlist {padding-top: 0; margin-top: 0.5em; line-height: 1.8em;}
+			p.paginationlist span {display: none;}
+			p.paginationlist a {color: #333;}
+			p.paginationlist a, p.paginationlist strong {padding: 1px 5px; border: 1px solid #ccc;}
+			p.paginationlist strong {border-color: #333;}
+			p.paginationlist a.selected {background-color: #ddd;}
+			p.paginationlist a:hover {border-color: #6100c1; background-color: #f0e1ff; text-decoration: none;}
+			/* Icons */
+			a.action {padding: 10px; background-repeat: no-repeat; background-position: 4px center; padding: 3px 4px 3px 24px; white-space: no-wrap;}
+			a.button {background-color: #f7f7f7; border: 1px solid #ddd; -moz-border-radius: 3px; margin-right: 1px;}
+			a.button:hover {background-color: #fafafa; border-color: #aaa;}
+			a.add {background-image: url(/images/icons/add.png);}
+			a.clone {background-image: url(/images/icons/application_double.png);}
+			a.delete {background-image: url(/images/icons/cross.png);}
+			a.edit {background-image: url(/images/icons/page_white_edit.png);}
+			a.list {background-image: url(/images/icons/application_view_detail.png);}
+			a.quicklist {background-image: url(/images/icons/application_side_list.png);}
+			a.view {background-image: url(/images/icons/page.png);}
+			/* Field limiting */
+			div.limitfields {margin-top: 10px; border: 1px solid #ddd; padding: 2px 10px;}
+			div.limitfields table.checkboxcolumns td {padding-top: 0; vertical-align: top;}
+		';
+		
+		# Add the surrounding tags if required
+		if ($addSurroundingTags) {
+			$html  = '<style type="text/css" media="screen">' . "\n" . $html . '</style>';
+		}
+		
+		# Return the HTML
 		return $html;
 	}
 	
