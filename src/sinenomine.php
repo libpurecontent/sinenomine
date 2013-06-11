@@ -22,6 +22,7 @@ class sinenomine
 	var $user = NULL;
 	var $credentialsUser = false;
 	var $data = NULL;	// The data that can be retrieved from >process ()
+	var $key = false;
 	var $html = '';
 	var $mainHtml = '';
 	var $includeOnly = array ();
@@ -89,6 +90,7 @@ class sinenomine
 		'hideTableIntroduction'	=> false,	// Hide text "This table, X.Y., contains ..." and "You can [+ add a record]"
 		'fieldFiltering' => true,	// Whether to enable the field filtering interface; either true/false or string database.table.field for storage of the user data
 		'tableCommentsInSelectionList' => false,	// Whether the table comments should be shown in a table selection list (rather than the table name itself)
+		'formDiv' => 'graybox lines',
 	);
 	
 	
@@ -142,6 +144,7 @@ class sinenomine
 		# Load required libraries
 		require_once ('application.php');
 		require_once ('database.php');
+		require_once ('pagination.php');
 		require_once ('pureContent.php');
 		// session.php is loaded below, as it depends on settings which are dependent on application.php
 		
@@ -780,7 +783,7 @@ class sinenomine
 			$page = ((isSet ($_GET['page']) && is_numeric ($_GET['page'])) ? $_GET['page'] : 1);
 			$pageInUse = ($allRecords ? 'all' : $page);
 			$pageOriginal = $page;
-			list ($totalPages, $offset, $totalRecords, $limit, $page) = application::getPagerData ($totalRecords, $this->settings['pagination'], $page);
+			list ($totalPages, $offset, $totalRecords, $limit, $page) = pagination::getPagerData ($totalRecords, $this->settings['pagination'], $page);
 			
 			# Assemble the pagination SQL, if page is not 'all'
 			if (!$allRecords) {
@@ -900,7 +903,6 @@ class sinenomine
 		
 		# Assemble the data, starting with the links
 		foreach ($this->data as $key => $attributes) {
-			$key = htmlspecialchars ($key);
 			$table[$key]['Record'] = '<strong>' . $this->createLink ($this->database, $this->table, $key, NULL, NULL, 'action view') . '</strong>';
 			if ($this->settings['showViewLink']) {
 				$table[$key]['View'] = $this->createLink ($this->database, $this->table, $key, NULL, 'View', 'action view');
@@ -1002,16 +1004,13 @@ class sinenomine
 		# If the field filtering UI is not enabled, just return the current fields
 		if (!$this->settings['fieldFiltering']) {return $this->fields;}
 		
-		# Get the fields in use, as well as determining the name of the middle field for display purposes
+		# Get the fields in use
 		$checkboxes = array ();
 		$i = 0;
 		foreach ($this->fields as $field => $attributes) {
 			if ($field == $this->key) {continue;}
 			$checkboxes[$field] = $this->headings[$field];
-			$checkboxIndex[$i++] = $field;
 		}
-		$middleCheckboxNumber = ceil (count ($checkboxes) / 2) + 1;
-		$middleCheckbox = $checkboxIndex[$middleCheckboxNumber];
 		
 		# Determine whether to save state; note that this only supports a single table
 		$stateSaving = false;
@@ -1180,19 +1179,27 @@ class sinenomine
 		# Get the attributes
 		$attributes = $this->attributes;
 		
-		# In editing mode (i.e. where the key value is known - NB adding is handled below), when requiring a forcedFileName, if %id has been set, replace with the key value
+		# Create a list of uniqueable field names (i.e. those with PRI or UNI)
+		$uniqueableFields = array ($this->key);
+		foreach ($this->fields as $fieldname => $fieldAttributes) {
+			if (strtolower ($fieldAttributes['Key']) == 'uni') {	// UNI for unique keys
+				$uniqueableFields[] = $fieldname;
+			}
+		}
+		
+		# In editing mode (i.e. where the key value is known - NB adding is handled below), when requiring a forcedFileName, if %<uniquefield>, (e.g. '%id') has been set, replace with the value of that field in the submitted record
 		if ($action == 'edit') {
 			foreach ($attributes as $key => $widgetAttributes) {
 				if (isSet ($widgetAttributes['forcedFileName'])) {
-					if ($widgetAttributes['forcedFileName'] == '%id') {
-						$attributes[$key]['forcedFileName'] = $data[$this->key];	// NB This means that only one field can have an upload for the set folder; however, this is correct logic, as otherwise they would overwrite each other anyway
+					if ($selectedUniqueableField = $this->uniqueableFieldSpecified ($widgetAttributes['forcedFileName'], $uniqueableFields)) {
+						$attributes[$key]['forcedFileName'] = $data[$selectedUniqueableField];
 					}
 				}
 			}
 		}
 		
 		# Deal with automatic keys (which will now be non-editable)
-		if (($action != 'edit') && $this->keyIsAutomatic) {
+		if (($action != 'edit') && ($action != 'clone') && $this->keyIsAutomatic) {
 			#!# The first four values are a workaround for just placing the text '(automatically assigned)'
 			$keyAttributes['type'] = 'select';
 			$keyAttributes['forceAssociative'] = true;
@@ -1220,6 +1227,20 @@ class sinenomine
 		# Merge in the key handling, adding to anything explicitly supplied
 		$attributes[$this->key] = $keyAttributes + (array_key_exists ($this->key, $attributes) ? $attributes[$this->key] : array ());
 		
+		# If not adding, unset any default values in the attributes
+		if ($action != 'add') {
+			foreach ($attributes as $field => $properties) {
+				foreach ($properties as $key => $widgetAttributes) {
+					if ($key == 'default') {
+						unset ($attributes[$field][$key]);
+						if (!$attributes[$field]) {			// Remove now-emptied attributes
+							unset ($attributes[$field]);
+						}
+					}
+				}
+			}
+		}
+		
 		# Load and create a form
 		require_once ('ultimateForm.php');
 		$form = new form (array (
@@ -1229,7 +1250,7 @@ class sinenomine
 			'nullText' => $this->settings['nullText'],
 			'cols' => $this->settings['cols'],
 			'rows' => $this->settings['rows'],
-			'div' => 'graybox lines',
+			'div' => $this->settings['formDiv'],
 			'submitButtonPosition' => 'both',	# Basically a workaround for when there is a refresh button (which then becomes the first 'submit' button, and thus the default action when pressing return)
 		));
 		$form->dataBinding (array (
@@ -1238,7 +1259,7 @@ class sinenomine
 			'data' => $data,
 			'lookupFunction' => array ('database', 'lookup'),
 			'lookupFunctionParameters' => $this->settings['lookupFunctionParameters'],
-			'lookupFunctionAppendTemplate' => "<a href=\"{$this->baseUrl}/" . ($this->includeDatabaseUrlPart ? '%database/' : '') . "%table/\" class=\"noarrow\" title=\"Click here to open a new window for editing these values; then click on refresh.\" target=\"_blank\"> ...</a>%refresh",
+			'lookupFunctionAppendTemplate' => "<a href=\"{$this->baseUrl}/" . ($this->includeDatabaseUrlPart ? '%database/' : '') . "%table/\" class=\"noarrow\" tabindex=\"998\" title=\"Click here to open a new window for editing these values; then click on refresh.\" target=\"_blank\"> ...</a>%refreshtabindex999",
 			'includeOnly' => $this->includeOnly,
 			'exclude' => $this->exclude,
 			'attributes' => $attributes,
@@ -1281,19 +1302,21 @@ class sinenomine
 			} else {
 				$this->record = $record[$this->key];
 			}
+			$recordIncludingKey = $record;						// Take a copy of the record
+			$recordIncludingKey[$this->key] = $this->record;	// Add in the key so that the key field is there, whether or not the key is automatic, for easy reference below
 			$this->recordEntities = htmlspecialchars ($this->record);
 			$this->recordLink = $this->createLink ($this->database, $this->table, $this->record, NULL, NULL, NULL, NULL, NULL, false);
 			
 			# For new records (i.e. not editing), when requiring a forcedFileName, if %id has been set, move the file (post-upload is the best we can do, since we don't know the ID until after the form has completed)
 			$formFieldsSpecification = $form->getSpecification ();
 			foreach ($attributes as $fieldname => $widgetAttributes) {
-				#!# Can get "Notice: Undefined index: id in sinenomine.php on line 1284", e.g. at /abstracts/data/instances/add.html
+				if (!isSet ($formFieldsSpecification[$fieldname])) {continue;}	// E.g. The form doesn't show the ID when inserting so there is no field structure data
 				if ($formFieldsSpecification[$fieldname]['type'] == 'upload') {
 					if (isSet ($widgetAttributes['forcedFileName'])) {
-						if ($widgetAttributes['forcedFileName'] == '%id') {
-							$newlyUploadedFile = $widgetAttributes['directory'] . $record[$fieldname];
+						if ($selectedUniqueableField = $this->uniqueableFieldSpecified ($widgetAttributes['forcedFileName'], $uniqueableFields)) {
+							$newlyUploadedFile = $widgetAttributes['directory'] . $record[$fieldname][0];
 							$extension = pathinfo ($newlyUploadedFile, PATHINFO_EXTENSION);
-							$newFilename = $this->record . '.' . $extension;
+							$newFilename = $recordIncludingKey[$selectedUniqueableField] . '.' . $extension;
 							$moveTo = $widgetAttributes['directory'] . $newFilename;
 							
 							# Move the file
@@ -1328,6 +1351,21 @@ class sinenomine
 		
 		# Return the HTML
 		return $html;
+	}
+	
+	
+	# Function to determine if a %<uniquefield> has been specified as an attribute, e.g. %id
+	private function uniqueableFieldSpecified ($fieldReferenceString /* e.g. '%id' */, $uniqueableFields)
+	{
+		# If it doesn't start with a % then no match
+		if (!preg_match ('/^%(.+)$/', $fieldReferenceString, $matches)) {return false;}
+		
+		# If the match is in the array, then return it
+		$field = $matches[1];
+		if (in_array ($field, $uniqueableFields)) {return $field;}
+		
+		# No match so return false
+		return false;
 	}
 	
 	
@@ -1368,7 +1406,7 @@ class sinenomine
 		# Escape the query for use in the SQL
 		$searchPhraseEscaped = $this->databaseConnection->escape ($searchPhrase);
 		
-		# Construct field match extracts; see also ultimateForm.php::dataBinding() which contains some useful pointers
+		# Construct field match extracts; see also ultimateForm.php:dataBinding() which contains some useful pointers
 		$matchesSql = array ();
 		foreach ($this->fields as $field => $attributes) {
 			switch (true) {
@@ -1877,7 +1915,7 @@ class sinenomine
 					
 					# Construct HTML for the joins if one exists
 					$join = $this->databaseConnection->convertJoin ($field['Field']);
-					$joinedToHtml = ($join ? ('&nbsp;&nbsp;(joined to <a href="#' . htmlspecialchars ("{$database}.{$table}") . '">' . htmlspecialchars ("{$database}.{$table}") . '</a>)') : '');
+					$joinedToHtml = ($join ? ('&nbsp;&nbsp;(joined to <a href="#' . htmlspecialchars ("{$join['database']}.{$join['table']}") . '">' . htmlspecialchars ("{$join['database']}.{$join['table']}") . '</a>)') : '');
 					
 					# Construct HTML showing the collation
 					$collationHtml = '';
@@ -2193,7 +2231,6 @@ class sinenomine
 			/* Forms */
 			fieldset {border: 0; padding: 0;}
 			td {padding: 10px 2px 0;}
-			td.title {text-align: right; vertical-align: top;}
 			.error, .warning {color: red;}
 			.comment {color: gray;}
 			input, select, textarea, option, td.data label {color: #603;}
@@ -2212,6 +2249,7 @@ class sinenomine
 			table.sinenomine td.key a {display: block;}
 			table.sinenomine, table.lines {margin-top: 1.2em;}
 			table.sinenomine th.text {min-width: 300px;}
+			table.sinenomine td {text-align: left;}
 			/* Lines table style */
 			table.lines {border-collapse: collapse; /* width: 95%; */}
 			.lines td, .lines th {border-bottom: 1px solid #e9e9e9; padding: 6px 4px 2px; vertical-align: top; text-align: left;}
