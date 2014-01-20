@@ -15,26 +15,26 @@
 class sinenomine
 {
 	# Class variables
-	var $database = NULL;
-	var $table = NULL;
-	var $record = NULL;
-	var $databaseConnection = NULL;
-	var $user = NULL;
-	var $credentialsUser = false;
-	var $data = NULL;	// The data that can be retrieved from >process ()
-	var $key = false;
-	var $html = '';
-	var $mainHtml = '';
-	var $includeOnly = array ();
-	var $exclude = array ();
-	var $attributes = array ();
-	var $orderby = array ();
-	var $direction = array ();
-	var $validation = array ();
+	private $database = NULL;
+	private $table = NULL;
+	private $record = NULL;
+	private $databaseConnection = NULL;
+	private $user = NULL;
+	private $credentialsUser = false;
+	private $data = NULL;	// The data that can be retrieved from >process ()
+	private $key = false;
+	private $html = '';
+	private $mainHtml = '';
+	private $includeOnly = array ();
+	private $exclude = array ();
+	private $attributes = array ();
+	private $orderby = array ();
+	private $direction = array ();
+	private $validation = array ();
 	
 	
 	# Specify available arguments as defaults or as NULL (to represent a required argument)
-	var $defaults = array (
+	private $defaults = array (
 		'hostname' => 'localhost',	// Whether to use internal logins
 		'vendor'	=> 'mysql',
 		'username'	=> false,	// Pre-supplied username
@@ -43,16 +43,20 @@ class sinenomine
 		'autoLogoutTime' => 1800,	// Number of seconds after which automatic logout will take place
 		'database' => false,
 		'table' => false,
+		'tableUrlMoniker' => false,	// When forcing a table, enables a URL moniker instead of the table name itself
+		'record' => false,	// Force to a specific record ID
 		'administrators' => array (),	// List of administrators
 		'userIsAdministrator' => false,	// Whether the user is an administrator (overrides list of administrators)
 		'baseUrl' => false,
 		'do' => 'do',	// $_GET['do'] or something else for the main action, e.g. 'action' would look at $_GET['action']; 'do' is the default as it is less likely to clash
+		'action' => false,		// Forced action (e.g. index/edit/delete) - like 'do' but a direct value rather than a reference to a $_GET field
 		'databaseUrlPart' => false,	// Whether to include the database in the URL *if* a database has been supplied in the settings
 		'hostnameInTitle' => false,	// Whether to include the hostname in the <title> tag hierarchy
 		//'administratorEmail'	=> $_SERVER['SERVER_ADMIN'], /* Defined below */	// Who receives error notifications (or false if disable notifications)
 		'gui' => false,	// Whether to add GUI features rather than just be an embedded component
 		'headerHtml' => false,	// Specific header HTML (rather than the default); ignored in non-GUI mode
 		'footerHtml' => false,	// Specific footer HTML (rather than the default); ignored in non-GUI mode
+		'headingLevel' => 1,	// Heading level for main title
 		'showMetadata' => true,	// Whether the metadata fields at the top of table view are visible
 		'excludeMetadataFields' => array ('Field', /*'Collation', 'Default',*/'Privileges'),
 		'commentsAsHeadings' => true,	// Whether to use comments as headings if there are any comments
@@ -71,11 +75,16 @@ class sinenomine
 		'denyAdministratorOverride' => true,	// Whether to allow administrators access to denied database(s)/table(s)
 		'includeOnly' => array (),
 		'attributesSettingsPlaceholders' => true,	// Whether settings in attributes should have placeholder replacement
-		'nullText' => '',	// ultimateForm defaults
-		'cols' => 60,		// ultimateForm defaults
-		'rows' => 5,		// ultimateForm defaults
+		'nullText' => '',		// ultimateForm defaults
+		'size' => 30,			// ultimateForm defaults
+		'cols' => 60,			// ultimateForm defaults
+		'rows' => 5,			// ultimateForm defaults
+		'datePicker' => false,	// ultimateForm defaults
+		'int1ToCheckbox' => false,
+		'unsavedDataProtection' => true,
 		'lookupFunctionParameters' => array (),
 		'refreshSeconds' => 0,	// Refresh time in seconds after editing an article
+		'successfulRecordRedirect' => false,	// Whether to redirect to a successfully-submitted (created/edited) record and show a flash
 		'showViewLink' => false,	// Whether to show the redundant 'view' link in the record listings
 		'compressWhiteSpace' => true,	// Whether to compress whitespace between table cells in the HTML
 		'reserved' => array ('cluster', 'information_schema', 'mysql'),
@@ -88,14 +97,15 @@ class sinenomine
 		'phpmyadmin' => false,	// The base of a PhpMyAdmin instance if links to equivalent pages are wanted
 		'queryTerm'	=> 'q',
 		'hideTableIntroduction'	=> false,	// Hide text "This table, X.Y., contains ..." and "You can [+ add a record]"
-		'fieldFiltering' => true,	// Whether to enable the field filtering interface; either true/false or string database.table.field for storage of the user data
+		'fieldFiltering' => false,	// Whether to enable the field filtering interface; string database.table.field for storage of the user data
+		'fieldFilteringCheckboxesTruncate' => 25,	// Whether to truncate field filtering checkboxes text
 		'tableCommentsInSelectionList' => false,	// Whether the table comments should be shown in a table selection list (rather than the table name itself)
 		'formDiv' => 'graybox lines',
 	);
 	
 	
 	# Specify available actions
-	var $actions = array (
+	private $actions = array (
 		'logout' => array (
 			'description' => 'Logout',
 			'url' => '/logout.html',
@@ -139,7 +149,7 @@ class sinenomine
 	
 	
 	# Constructor
-	function __construct ($settings = array (), $databaseConnection = NULL, &$html = NULL)
+	public function __construct ($settings = array (), $databaseConnection = NULL, &$html = NULL)
 	{
 		# Load required libraries
 		require_once ('application.php');
@@ -158,8 +168,8 @@ class sinenomine
 		# Parse pre-supplied credentials files settings to inject these into the main settings
 		$errors = array ();	// Hack to cache this until the settings have been assigned, so that >error() doesn't produce offsets
 		if (isSet ($settings['credentials']) && $settings['credentials'] && is_array ($settings['credentials'])) {
-			foreach ($settings['credentials'] as $url => $credentialsFile) {
-				if (ereg ($url, $_SERVER['REQUEST_URI'])) {
+			foreach ($settings['credentials'] as $urlRegexp => $credentialsFile) {
+				if (preg_match ('@' . $urlRegexp . '@', $_SERVER['REQUEST_URI'])) {
 					if (is_readable ($credentialsFile)) {
 						include ($credentialsFile);
 						if (isSet ($credentials)) {
@@ -181,10 +191,13 @@ class sinenomine
 		}
 		
 		# Assign the base URL
-		$this->baseUrl = ($this->settings['baseUrl'] ? $this->settings['baseUrl'] : application::getBaseUrl ());
+		$this->baseUrl = ($this->settings['baseUrl'] ? ($this->settings['baseUrl'] == '/' ? '' : $this->settings['baseUrl']) : application::getBaseUrl ());
 		
 		# Determine the action to take, using the default (index) if none supplied
 		$this->action = (!isSet ($_GET[$this->settings['do']]) ? 'index' : (array_key_exists ($_GET[$this->settings['do']], $this->actions) ? $_GET[$this->settings['do']] : NULL));
+		if ($this->settings['action']) {
+			$this->action = $this->settings['action'];	// Overrides any $_GET['do']
+		}
 		
 		# Define a logout URL and Determine whether to log out
 		$this->logoutUrl = $this->baseUrl . ($this->settings['rewrite'] ? $this->actions['logout']['url'] : str_replace ('%do', $this->settings['do'], $this->actions['logout']['urlQueryString']));
@@ -254,7 +267,7 @@ class sinenomine
 	
 	
 	# Function which activates the processing, which must be called by the user
-	function process ()
+	public function process ()
 	{
 		# Take action
 		if ($this->databaseConnection && $this->action) {
@@ -281,7 +294,7 @@ class sinenomine
 	
 	
 	# Function to accept attributes settings in the dataBinding
-	function attributes ($database = NULL, $table = NULL, $field = NULL, $settings = NULL)
+	public function attributes ($database = NULL, $table = NULL, $field = NULL, $settings = NULL)
 	{
 		# Replace settings with placeholders
 		if ($this->settings['attributesSettingsPlaceholders'] && $settings && is_array ($settings)) {
@@ -298,7 +311,7 @@ class sinenomine
 	
 	
 	# Function to accept a default ordering for the table (overridablevia query string)
-	function orderby ($database = NULL, $table = NULL, $orderby = NULL)
+	public function orderby ($database = NULL, $table = NULL, $orderby = NULL)
 	{
 		# Disallow if not a string
 		if (!is_string ($orderby)) {return false;}
@@ -309,7 +322,7 @@ class sinenomine
 	
 	
 	# Function to accept direction settings (overridable via query string)
-	function direction ($database = NULL, $table = NULL, $direction = NULL)
+	public function direction ($database = NULL, $table = NULL, $direction = NULL)
 	{
 		# Disallow if not a string
 		if (!is_string ($direction)) {return false;}
@@ -325,7 +338,7 @@ class sinenomine
 	
 	
 	# Function to accept includeOnly settings in the dataBinding
-	function includeOnly ($database = NULL, $table = NULL, $fields = NULL)
+	public function includeOnly ($database = NULL, $table = NULL, $fields = NULL)
 	{
 		# Register the parameters
 		$this->register (__FUNCTION__, $database, $table, $fields);
@@ -333,7 +346,7 @@ class sinenomine
 	
 	
 	# Function to accept exclude settings in the dataBinding
-	function exclude ($database = NULL, $table = NULL, $fields = NULL)
+	public function exclude ($database = NULL, $table = NULL, $fields = NULL)
 	{
 		# Register the parameters
 		$this->register (__FUNCTION__, $database, $table, $fields);
@@ -341,7 +354,7 @@ class sinenomine
 	
 	
 	# Function to deal with registering overrides
-	function register ($function, $database, $table, $field, $settings = NULL)
+	private function register ($function, $database, $table, $field, $settings = NULL)
 	{
 		# Check parameters are all supplied
 		$setupOk = true;
@@ -368,7 +381,7 @@ class sinenomine
 	
 	
 	# Function to set up the environment and take action
-	function main ()
+	private function main ()
 	{
 		# Start the HTML
 		$html  = '';
@@ -392,7 +405,7 @@ class sinenomine
 		}
 		
 		# Show title
-		$html = "\n<h2>" . htmlspecialchars ($this->actions[$this->action]['description']) . '</h2>';
+		$html = "\n<h{$this->settings['headingLevel']}>" . htmlspecialchars ($this->actions[$this->action]['description']) . "</h{$this->settings['headingLevel']}>";
 		
 		# Determine whether links should include the database URL part
 		$this->includeDatabaseUrlPart = (!$this->settings['database'] || ($this->settings['database'] && $this->settings['databaseUrlPart']));
@@ -550,7 +563,7 @@ class sinenomine
 		# Get the joins for this table and add them into the fields list as well as creating an array of join data
 		$this->joins = array ();
 		foreach ($this->fields as $fieldname => $fieldAttributes) {
-			if ($matches = $this->databaseConnection->convertJoin ($fieldAttributes['Field'])) {
+			if ($matches = database::convertJoin ($fieldAttributes['Field'])) {
 				$this->joins[$fieldname] = $matches;
 				$this->fields[$fieldname]['_field'] = $matches['field'];
 				$this->fields[$fieldname]['_targetDatabase'] = $matches['database'];
@@ -576,17 +589,18 @@ class sinenomine
 		$this->recordEntities = false;
 		$this->recordLink = false;
 		$this->data = array ();
-		if (isSet ($_GET['record'])) {
+		$recordId = ($this->settings['record'] ? $this->settings['record'] : (isSet ($_GET['record']) ? $_GET['record'] : false));
+		if ($recordId) {
 			#!# Still says 'view records' as the main title
 			if ($this->action == 'index') {$this->action = 'record';}
-			if (!$this->data = $this->databaseConnection->selectOne ($this->database, $this->table, array ($this->key => $_GET['record']))) {
+			if (!$this->data = $this->databaseConnection->selectOne ($this->database, $this->table, array ($this->key => $recordId))) {
 				if ($this->action != 'add') {
-					$html .= "\n<p>There is no such record <em>" . htmlspecialchars ($_GET['record']) . '</em>. Did you intend to ' . $this->createLink ($this->database, $this->table, $_GET['record'], 'add', 'create a new record' . ($this->keyIsAutomatic ? '' : ' with that key'), 'action button add') . '?</p>';
+					$html .= "\n<p>There is no such record <em>" . htmlspecialchars ($recordId) . '</em>. Did you intend to ' . $this->createLink ($this->database, $this->table, $recordId, 'add', 'create a new record' . ($this->keyIsAutomatic ? '' : ' with that key'), 'action button add') . '?</p>';
 					$this->action = NULL;
 					return $html;
 				}
 			} else {
-				$this->record = $_GET['record'];
+				$this->record = $recordId;
 				$this->recordEntities = htmlspecialchars ($this->record);
 				$this->recordLink = $this->createLink ($this->database, $this->table, $this->record, NULL, NULL, NULL, NULL, NULL, false);
 			}
@@ -601,7 +615,7 @@ class sinenomine
 	
 	
 	# Function to return the HTML
-	function getHtml ()
+	public function getHtml ()
 	{
 		# Return the HTML
 		return $this->html;
@@ -609,7 +623,7 @@ class sinenomine
 	
 	
 	# Function to create a breadcrumb trail
-	function breadcrumbTrail ()
+	private function breadcrumbTrail ()
 	{
 		# End if there is no database connection
 		if (!$this->databaseConnection) {return false;}
@@ -632,7 +646,7 @@ class sinenomine
 	
 	
 	# Function to return the current database/table/record hierarchy position as text
-	function position ($hostname = true, $addPrefix = ': ', $convertEntities = true)
+	private function position ($hostname = true, $addPrefix = ': ', $convertEntities = true)
 	{
 		# End if there is no database connection
 		if (!$this->databaseConnection) {return false;}
@@ -653,7 +667,7 @@ class sinenomine
 	
 	
 	# Function to create the GUI-mode menu
-	function pageMenu ()
+	private function pageMenu ()
 	{
 		# End if there is no database connection
 		if (!$this->databaseConnection) {return false;}
@@ -673,7 +687,7 @@ class sinenomine
 	
 	
 	# Function to create a list of links
-	function linklist ($databases, $tables = NULL, $current = false, $addAddLink = false, $listingsShowTotals = false, $tabs = 1)
+	private function linklist ($databases, $tables = NULL, $current = false, $addAddLink = false, $listingsShowTotals = false, $tabs = 1)
 	{
 		# Determine which is being looped through (databases or tables)
 		$isDatabases = (is_array ($databases));
@@ -691,15 +705,15 @@ class sinenomine
 				$label = "{$value} [{$item}]";
 			}
 			
-			# Show the number of records in the table if wanted
-			#!# Ideally the bracketed section would have a span round it for styling
-			$total = ((is_array ($tables) && $listingsShowTotals) ? ' (' . $this->databaseConnection->getTotal ($databases, $item) . ')' : false);
-			
 			# Define the link for the current item
 			if (is_array ($databases)) {
 				$class = ($item == $this->database ? 'current' : false);
 				$link = $this->createLink ($item, NULL, NULL, NULL, NULL, $class);
 			} else {
+				# Show the number of records in the table if wanted
+				#!# Ideally the bracketed section would have a span round it for styling
+				$total = ((is_array ($tables) && $listingsShowTotals) ? ' (' . $this->databaseConnection->getTotal ($databases, $item) . ')' : false);
+				
 				$class  = ($item == $this->table ? 'current' : false);
 				if ($this->settings['highlightMainTable'] && ($item == $this->database)) {$class .= ($class ? ' ' : '') . 'maintable';}
 				$link = $this->createLink ($databases, $item, NULL, NULL, $label . $total, NULL, NULL, $class);
@@ -726,7 +740,7 @@ class sinenomine
 	
 	
 	# Function to list an index of all records in a table, i.e. only the keys
-	function index ($fullView = true, $data = false)
+	private function index ($fullView = true, $data = false)
 	{
 		# Start the HTML
 		$html = '';
@@ -999,10 +1013,10 @@ class sinenomine
 	
 	
 	# Function to enable the user to filter visible fields
-	public function filterFields ($unfilterableFields = array ('id'))
+	private function filterFields ($unfilterableFields = array ('id'))
 	{
-		# If the field filtering UI is not enabled, just return the current fields
-		if (!$this->settings['fieldFiltering']) {return $this->fields;}
+		# If the field filtering UI is not enabled, just return an empty string
+		if (!$this->settings['fieldFiltering']) {return false;}
 		
 		# Get the fields in use
 		$checkboxes = array ();
@@ -1058,6 +1072,7 @@ class sinenomine
 			'values' => $checkboxes,
 			'default' => $showFields,
 			'columns' => 5,
+			'truncate' => $this->settings['fieldFilteringCheckboxesTruncate'],
 		));
 		if ($result = $form->process ($html)) {
 			$showFields = array ();
@@ -1087,7 +1102,7 @@ class sinenomine
 	
 	
 	# Function to urlencode a string and double-encode slashes
-	function doubleEncode ($string)
+	private function doubleEncode ($string)
 	{
 		# Return the string, double-encoding slashes only
 		return rawurlencode (str_replace ('/', '%2f', $string));
@@ -1095,7 +1110,7 @@ class sinenomine
 	
 	
 	# Function to show all records in a table in full
-	function listing ()
+	private function listing ()
 	{
 		# Return the HTML
 		return $this->index ($fullView = false);
@@ -1103,10 +1118,16 @@ class sinenomine
 	
 	
 	# Function to view a record
-	function record ($embed = false)
+	private function record ($embed = false)
 	{
 		# Start the HTML
 		$html  = '';
+		
+		# Show a flash if required
+		if ($flashValue = application::getFlashMessage ('record', $this->baseUrl . '/')) {
+			$message = "\n" . '<p><img src="/images/icons/tick.png" class="icon" alt="" /> <strong>The record has been ' . htmlspecialchars ($flashValue) . ', as below:</strong></p>';
+			$html .= "\n<div class=\"graybox flashmessage\">" . $message . '</div>';
+		}
 		
 		# Do lookups
 		$data = $this->data;
@@ -1127,7 +1148,7 @@ class sinenomine
 	
 	
 	# Function to add a record
-	function add ()
+	private function add ()
 	{
 		# Wrapper to editing a record but with the key taken out
 		return $this->recordManipulation (__FUNCTION__);
@@ -1135,7 +1156,7 @@ class sinenomine
 	
 	
 	# Function to clone a record
-	function cloneRecord ()
+	private function cloneRecord ()
 	{
 		# Wrapper to editing a record but with the key taken out
 		return $this->recordManipulation ('clone');
@@ -1143,7 +1164,7 @@ class sinenomine
 	
 	
 	# Function to edit a record
-	function edit ()
+	private function edit ()
 	{
 		# Edit the record
 		return $this->recordManipulation (__FUNCTION__);
@@ -1151,10 +1172,10 @@ class sinenomine
 	
 	
 	# Function to do record manipulation
-	function recordManipulation ($action)
+	private function recordManipulation ($action)
 	{
 		# Start the HTML
-		$html = "<p>On this page you can {$action} " . ($action == 'add' ? 'a record to ' : 'record ' . $this->createLink ($this->database, $this->table, $this->record, NULL, $this->record, 'action button view') . ' in ') . $this->createLink ($this->database, $this->table, NULL, NULL, NULL, 'action button list') . '.</p>';
+		$html = "\n\n<p>On this page you can {$action} " . ($action == 'add' ? 'a record to ' : 'record ' . $this->createLink ($this->database, $this->table, $this->record, NULL, $this->record, 'action button view') . ' in ') . $this->createLink ($this->database, $this->table, NULL, NULL, NULL, 'action button list') . '.</p>';
 		
 		#!# Lookup delete rights
 		
@@ -1170,7 +1191,8 @@ class sinenomine
 				$html .= "\n<p>You cannot add a record " . $this->createLink ($this->database, $this->table, $this->record, NULL, $this->record, 'action button view') . ' as it already exists. You can ' . $this->createLink ($this->database, $this->table, $this->record, 'clone', 'clone that record', 'action button clone') . ' or ' . $this->createLink ($this->database, $this->table, NULL, 'add', 'create a new record', 'action button add') . '.</p>';
 				return $html;
 			}
-			if (isSet ($_GET['record'])) {
+			$recordId = ($this->settings['record'] ? $this->settings['record'] : (isSet ($_GET['record']) ? $_GET['record'] : false));
+			if ($recordId) {
 				$data[$this->key] = $_GET['record'];
 				$keyAttributes['editable'] = false;
 			}
@@ -1250,8 +1272,10 @@ class sinenomine
 			'nullText' => $this->settings['nullText'],
 			'cols' => $this->settings['cols'],
 			'rows' => $this->settings['rows'],
+			'picker' => $this->settings['datePicker'],
 			'div' => $this->settings['formDiv'],
 			'submitButtonPosition' => 'both',	# Basically a workaround for when there is a refresh button (which then becomes the first 'submit' button, and thus the default action when pressing return)
+			'unsavedDataProtection' => $this->settings['unsavedDataProtection'],
 		));
 		$form->dataBinding (array (
 			'database' => $this->database,
@@ -1264,6 +1288,8 @@ class sinenomine
 			'exclude' => $this->exclude,
 			'attributes' => $attributes,
 			'intelligence' => $this->settings['intelligence'],
+			'int1ToCheckbox' => $this->settings['int1ToCheckbox'],
+			'size' => $this->settings['size'],
 		));
 		
 		# Add validation rules
@@ -1349,6 +1375,13 @@ class sinenomine
 			$html .= "\n<meta http-equiv=\"refresh\" content=\"{$this->settings['refreshSeconds']};url={$this->tableLink}\">";
 		}
 		
+		# Redirect if required, first setting a flash
+		if ($this->settings['successfulRecordRedirect']) {
+			$flashValue = ($action == 'edit' ? 'updated' : 'created');
+			$recordPath = $this->createLink ($this->database, $this->table, $this->record, NULL, NULL, NULL, NULL, false, $asHtml = false);
+			$html = application::setFlashMessage ('record', $flashValue, $recordPath, $html, $this->baseUrl . '/');
+		}
+		
 		# Return the HTML
 		return $html;
 	}
@@ -1401,6 +1434,7 @@ class sinenomine
 	
 	
 	# Function to provide search results
+	#!# Convert all this to prepared statements
 	private function searchResults ($searchPhrase)
 	{
 		# Escape the query for use in the SQL
@@ -1442,7 +1476,8 @@ class sinenomine
 					break;
 					
 				# Integer types, including years
-				case (preg_match ('/^(int|tinyint|smallint|mediumint|bigint|year)/i', $attributes['Type']) && is_int ($searchPhrase)):
+				#!# Doesn't yet support negative integers; cannot use is_int as will never match what is an incoming string
+				case (preg_match ('/^(int|tinyint|smallint|mediumint|bigint|year)/i', $attributes['Type']) && ctype_digit ($searchPhrase)):
 					$matchesSql[$field] = "`{$field}` = '{$searchPhraseEscaped}'";
 					break;
 					
@@ -1485,13 +1520,15 @@ class sinenomine
 	
 	
 	# Function to get current values (e.g. all the key numbers/names)
-	function getCurrentValues ($field, $exclude = false)
+	private function getCurrentValues ($field, $exclude = false)
 	{
 		# Add a WHERE clause if excluding
-		$where = '';
+		$where = array ();
 		if ($exclude !== false) {
-			$where = " WHERE {$field} != " . $this->databaseConnection->quote ($exclude);
+			$where[] = "{$field} != " . $this->databaseConnection->quote ($exclude);
 		}
+		$where[] = "{$field} IS NOT NULL";
+		$where = ' WHERE (' . implode (' AND ', $where) . ')';
 		
 		# Get the current values (often the list of keys)
 		$query = "SELECT {$field} FROM {$this->database}.{$this->table}{$where} ORDER BY {$field}";
@@ -1503,7 +1540,7 @@ class sinenomine
 	
 	
 	# Function to return the current record
-	function getRecord ()
+	public function getRecord ()
 	{
 		# Return the value
 		return $this->record;
@@ -1529,7 +1566,7 @@ class sinenomine
 	
 	
 	# Function to deal with database error handling
-	function error ($userErrorMessage = 'A database error occured.')
+	private function error ($userErrorMessage = 'A database error occured.')
 	{
 		# Get the error message
 		$error = ($this->databaseConnection ? $this->databaseConnection->error () : 'No database connection available');
@@ -1567,6 +1604,7 @@ class sinenomine
 	}
 	
 	
+	/*
 	# Function to parse dataBinding overrides
 	function parseOverrides ($setting)
 	{
@@ -1582,10 +1620,11 @@ class sinenomine
 		# Otherwise return false
 		return false;
 	}
+	*/
 	
 	
 	# Function to do referential integrity checks
-	function joinsTo ($database, $table, $record = false, $returnAsString = true)
+	private function joinsTo ($database, $table, $record = false, $returnAsString = true)
 	{
 		# Start an array of joins
 		$joins = array ();
@@ -1601,7 +1640,7 @@ class sinenomine
 				foreach ($fields as $field => $attributes) {
 					
 					# If a join is found, add it to the list
-					if ($join = $this->databaseConnection->convertJoin ($field)) {
+					if ($join = database::convertJoin ($field)) {
 						if (($this->database == $join['database']) && ($this->table == $join['table'])) {
 							$joins[$database][$table][$field] = true;
 							
@@ -1658,7 +1697,7 @@ class sinenomine
 	
 	
 	# Function dealing with consistent link creation, taking account of whether URL-rewriting is on
-	function createLink ($database = NULL, $table = NULL, $record = NULL, $action = NULL, $labelSupplied = NULL, $class = NULL, $page = NULL, $arguments = false, $asHtml = true, $asHtmlNewWindow = false, $asHtmlTableIncludesDatabase = false, $tooltips = true)
+	private function createLink ($database = NULL, $table = NULL, $record = NULL, $action = NULL, $labelSupplied = NULL, $class = NULL, $page = NULL, $arguments = false, $asHtml = true, $asHtmlNewWindow = false, $asHtmlTableIncludesDatabase = false, $tooltips = true)
 	{
 		# Start with the base URL and the database URL if required
 		if ($this->settings['rewrite']) {
@@ -1673,11 +1712,12 @@ class sinenomine
 		
 		# Add the table if required
 		if ($table !== NULL) {
-			$link .= ($this->settings['rewrite'] ? $this->doubleEncode ($table) . '/' : (($database && $this->includeDatabaseUrlPart) ? ($asHtml ? '&amp;' : '&') : '') . 'table=' . $this->doubleEncode ($table));
+			$tableMoniker = $table;
+			if ($this->settings['tableUrlMoniker']) {$tableMoniker = $this->settings['tableUrlMoniker'];}
+			$link .= ($this->settings['rewrite'] ? $this->doubleEncode ($tableMoniker) . '/' : (($database && $this->includeDatabaseUrlPart) ? ($asHtml ? '&amp;' : '&') : '') . 'table=' . $this->doubleEncode ($tableMoniker));
 			$label = ($asHtmlTableIncludesDatabase ? "{$database}.{$table}" : $table);
 			$tooltip = ($asHtmlTableIncludesDatabase ? "Database &amp; table" : 'Table');
 		}
-		
 		
 		# Add a page number if required
 		if ($page !== NULL) {
@@ -1737,7 +1777,7 @@ class sinenomine
 	
 	
 	# Function to delete a record
-	function delete ()
+	private function delete ()
 	{
 		# Start the HTML
 		$html = '';
@@ -1799,7 +1839,7 @@ class sinenomine
 	
 	
 	# Function to check for integer fields nearing overflow
-	function overflow ($hideReservedTables = true, $checkPercentage = 75, $mail = false)
+	private function overflow ($hideReservedTables = true, $checkPercentage = 75, $mail = false)
 	{
 		# List supported sizes, from http://dev.mysql.com/doc/refman/5.1/en/numeric-types.html
 		$ranges = array (
@@ -1891,7 +1931,7 @@ class sinenomine
 	# Function to show a complete hierarchical listing of the database structure
 	#!# Privileges?
 	#!# Database limitation mode
-	function structure ($hideReservedTables = true)
+	private function structure ($hideReservedTables = true)
 	{
 		# Add notes at the start
 		$html  = "\n<p>This shows the database/table/field hierarchy. Fields with a <strong>key</strong> are shown in bold" . ($this->settings['highlightMainTable'] ? ', as are tables whose name matches the database they are contained in' : '') . '.</p>';
@@ -1914,7 +1954,7 @@ class sinenomine
 				foreach ($fields as $field) {
 					
 					# Construct HTML for the joins if one exists
-					$join = $this->databaseConnection->convertJoin ($field['Field']);
+					$join = database::convertJoin ($field['Field']);
 					$joinedToHtml = ($join ? ('&nbsp;&nbsp;(joined to <a href="#' . htmlspecialchars ("{$join['database']}.{$join['table']}") . '">' . htmlspecialchars ("{$join['database']}.{$join['table']}") . '</a>)') : '');
 					
 					# Construct HTML showing the collation
@@ -1955,7 +1995,7 @@ class sinenomine
 	
 	
 	# Function (which can be run statically) to convert key numbers/names in a set of records
-	function convertJoinData ($data, $fields, $databaseConnection = false, $joins = false, $showNumberFields = false, $unsetNumericKey = true, $intJoinZeroClear = true, $modifyDisplay = true, $modifyDisplayConvertUrls = true)
+	private function convertJoinData ($data, $fields, $databaseConnection = false, $joins = false, $showNumberFields = false, $unsetNumericKey = true, $intJoinZeroClear = true, $modifyDisplay = true, $modifyDisplayConvertUrls = true)
 	{
 		# Load required libraries (only really required if running statically)
 		require_once ('application.php');
@@ -1972,7 +2012,7 @@ class sinenomine
 		# Use the pre-computed joins, or compute them
 		if ($joins === false) {
 			foreach ($fields as $fieldname => $fieldAttributes) {
-				if ($matches = $this->databaseConnection->convertJoin ($fieldAttributes['Field'])) {
+				if ($matches = database::convertJoin ($fieldAttributes['Field'])) {
 					$joins[$fieldname] = $matches;
 				}
 			}
@@ -2048,7 +2088,7 @@ class sinenomine
 				if ($modifyDisplay) {
 					#!# This will be rather inefficient
 					$fields = $this->databaseConnection->getFields ($joins[$field]['database'], $joins[$field]['table']);
-					$record = sinenomine::modifyDisplay ($record, $fields, $modifyDisplayConvertUrls);
+					$record = $this->modifyDisplay ($record, $fields, $modifyDisplayConvertUrls);
 				}
 				
 				# Put the new value into the data
@@ -2075,7 +2115,7 @@ class sinenomine
 	
 	
 	# Function to modify display of a record
-	function modifyDisplay ($record, $fields, $convertUrls = true)
+	private function modifyDisplay ($record, $fields, $convertUrls = true)
 	{
 		# Loop through each field
 		foreach ($record as $fieldname => $value) {
@@ -2119,13 +2159,13 @@ class sinenomine
 			$record[$fieldname] = $value;
 		}
 		
-		# Return the cleaned
+		# Return the cleaned record
 		return $record;
 	}
 	
 	
 	# Function to create a footer
-	function pageHeader ()
+	private function pageHeader ()
 	{
 		# End if not in GUI mode
 		if (!$this->settings['gui']) {return false;}
@@ -2161,9 +2201,9 @@ class sinenomine
 			body {font-size: 68%;}
 			input, textarea, select, option, checkbox {font-size: 1em;}
 			h1, h2, h3, h4, h5, h6 {color: #603; padding-bottom: 0; margin-bottom: 1em;}
-			h2 {font-size: 1.5em;}
+			h1 {font-size: 1.5em;}
 			/* Header */
-			h1, h1 a, h1 a:visited {font-size: 1.4em; font-weight: normal; color: #bbb; text-decoration: none; margin-bottom: 0;}
+			#header h1, #header h1 a, #header h1 a:visited {font-size: 1.4em; font-weight: normal; color: #bbb; text-decoration: none; margin-bottom: 0;}
 			p#logout {position: absolute; right: 0; top: 0; margin-right: 20px;}
 			p#phpmyadmin {position: absolute; right: 0; top: 2em; margin-right: 20px;}
 			/* Breadcrumb trail */
@@ -2305,7 +2345,7 @@ class sinenomine
 	
 	
 	# Function to create a footer
-	function pageFooter ()
+	private function pageFooter ()
 	{
 		# End if not in GUI mode
 		if (!$this->settings['gui']) {return false;}
