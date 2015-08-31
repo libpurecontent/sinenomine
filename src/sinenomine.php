@@ -82,6 +82,7 @@ class sinenomine
 		'datePicker' => false,	// ultimateForm defaults
 		'int1ToCheckbox' => false,
 		'unsavedDataProtection' => true,
+		'simpleJoin' => false,
 		'lookupFunctionParameters' => array (),
 		'refreshSeconds' => 0,	// Refresh time in seconds after editing an article
 		'successfulRecordRedirect' => false,	// Whether to redirect to a successfully-submitted (created/edited) record and show a flash
@@ -101,6 +102,17 @@ class sinenomine
 		'fieldFilteringCheckboxesTruncate' => 25,	// Whether to truncate field filtering checkboxes text
 		'tableCommentsInSelectionList' => false,	// Whether the table comments should be shown in a table selection list (rather than the table name itself)
 		'formDiv' => 'graybox lines',
+		'richtextEditorBasePath'			=> '/_ckeditor/',					# Global default setting for of the editor files
+		'richtextEditorToolbarSet'			=> 'pureContent',					# Global default setting for richtext editor toolbar set
+		'richtextEditorAreaCSS'				=> '',								# Global default setting for richtext editor CSS
+		'richtextWidth'						=> '100%',							# Global default setting for richtext width; assumed to be px unless % specified
+		'richtextHeight'					=> 400,								# Global default setting for richtext height; assumed to be px unless % specified
+		'richtextEditorFileBrowser'			=> '/_ckfinder/',					# Global default setting for richtext file browser path (must have trailing slash), or false to disable
+		'richtextEditorConfig.docType'		=> '<!DOCTYPE html>',				# Global default setting for richtext config.docType
+		'submitButtonPosition' => 'both',
+		'callback'	=> array (),	// Whether to register a callback class+method for a specific database/table/action, specified as a nested array
+		'constraint' => array (),	// Whether to register an SQL extract constraint for a specific database/table/action, specified as a nested array
+		'moveDeleteToEnd' => false,	// Whether to show the Delete link in the index view at the end (defaults to showing alongside the Edit/Clone buttons)
 	);
 	
 	
@@ -563,7 +575,8 @@ class sinenomine
 		# Get the joins for this table and add them into the fields list as well as creating an array of join data
 		$this->joins = array ();
 		foreach ($this->fields as $fieldname => $fieldAttributes) {
-			if ($matches = database::convertJoin ($fieldAttributes['Field'])) {
+			$simpleJoin = ($this->settings['simpleJoin'] ? array ($this->database, $this->table, $this->tables) : false);
+			if ($matches = database::convertJoin ($fieldAttributes['Field'], $simpleJoin)) {
 				$this->joins[$fieldname] = $matches;
 				$this->fields[$fieldname]['_field'] = $matches['field'];
 				$this->fields[$fieldname]['_targetDatabase'] = $matches['database'];
@@ -771,6 +784,12 @@ class sinenomine
 		}
 		$direction = ($descending ? ' DESC' : '');
 		
+		# Add constraint, which overrides all others, if required
+		$constraintsSql = '';
+		if (isSet ($this->settings['constraint'][$this->database]) && isSet ($this->settings['constraint'][$this->database][$this->table])) {
+			$constraintsSql = 'WHERE ' . $this->settings['constraint'][$this->database][$this->table];
+		}
+		
 		# Compile the SQL for ORDER BY
 		$orderBySql = "{$orderBy}{$direction}" . (($orderBy != $this->key) ? ",{$this->key}" : '');
 		
@@ -788,7 +807,7 @@ class sinenomine
 		if ($usePagination) {
 			
 			# Get a count of the data for pagination purposes
-			if (!$totalRecords = $this->databaseConnection->getTotal ($this->database, $this->table)) {
+			if (!$totalRecords = $this->databaseConnection->getTotal ($this->database, $this->table, $constraintsSql)) {
 				$html .= "\n<p>There are no records in the <em>{$this->tableEntities}</em> table.</p>\n<p>You can " . $this->createLink ($this->database, $this->table, NULL, 'add', 'add a record', 'action button add') . '.</p>';
 				return $html;
 			}
@@ -840,7 +859,7 @@ class sinenomine
 		if ($data) {
 			$this->data = $data;
 		} else {
-			$query = 'SELECT ' . ($fullView ? '*' : $this->key) . " FROM `{$this->database}`.`{$this->table}` ORDER BY {$orderBySql}{$paginationSql};";
+			$query = 'SELECT ' . ($fullView ? '*' : $this->key) . " FROM `{$this->database}`.`{$this->table}` {$constraintsSql} ORDER BY {$orderBySql}{$paginationSql};";
 			$this->data = $this->databaseConnection->getData ($query, "{$this->database}.{$this->table}");
 		}
 		$visibleRecords = count ($this->data);
@@ -934,6 +953,15 @@ class sinenomine
 					$fieldname = $field . ' ' . $this->fields[$field]['_type'];	// Add the class to the underlying column key
 					$table[$key][$fieldname] = str_replace (array ("\r\n", "\n"), '<br />', htmlspecialchars ($value));
 				}
+			}
+		}
+		
+		# Move delete to end if required
+		if ($this->settings['moveDeleteToEnd']) {
+			foreach ($table as $key => $record) {
+				$delete = $record['Delete'];
+				unset ($table[$key]['Delete']);
+				$table[$key]['Delete'] = $delete;
 			}
 		}
 		
@@ -1175,7 +1203,12 @@ class sinenomine
 	private function recordManipulation ($action)
 	{
 		# Start the HTML
-		$html = "\n\n<p>On this page you can {$action} " . ($action == 'add' ? 'a record to ' : 'record ' . $this->createLink ($this->database, $this->table, $this->record, NULL, $this->record, 'action button view') . ' in ') . $this->createLink ($this->database, $this->table, NULL, NULL, NULL, 'action button list') . '.</p>';
+		$html = '';
+		
+		# Add the instruction
+		if (!$this->settings['hideTableIntroduction']) {
+			$html = "\n\n<p class=\"introduction\">On this page you can {$action} " . ($action == 'add' ? 'a record to ' : 'record ' . $this->createLink ($this->database, $this->table, $this->record, NULL, $this->record, 'action button view') . ' in ') . $this->createLink ($this->database, $this->table, NULL, NULL, NULL, 'action button list') . '.</p>';
+		}
 		
 		#!# Lookup delete rights
 		
@@ -1274,14 +1307,27 @@ class sinenomine
 			'rows' => $this->settings['rows'],
 			'picker' => $this->settings['datePicker'],
 			'div' => $this->settings['formDiv'],
-			'submitButtonPosition' => 'both',	# Basically a workaround for when there is a refresh button (which then becomes the first 'submit' button, and thus the default action when pressing return)
+			'submitButtonPosition' => $this->settings['submitButtonPosition'],	# 'both' = Basically a workaround for when there is a refresh button (which then becomes the first 'submit' button, and thus the default action when pressing return)
 			'unsavedDataProtection' => $this->settings['unsavedDataProtection'],
+			'richtextEditorBasePath'			=> $this->settings['richtextEditorBasePath'],
+			'richtextEditorToolbarSet'			=> $this->settings['richtextEditorToolbarSet'],
+			'richtextEditorAreaCSS'				=> $this->settings['richtextEditorAreaCSS'],
+			'richtextWidth'						=> $this->settings['richtextWidth'],
+			'richtextHeight'					=> $this->settings['richtextHeight'],
+			'richtextEditorFileBrowser'			=> $this->settings['richtextEditorFileBrowser'],
+			'richtextEditorConfig.docType'		=> $this->settings['richtextEditorConfig.docType'],
+			'mailAdminErrors' => true,
+			'antispam' => true,
+			'antispamUrlsThreshold' => 4,
+			// 'akismetApiKey' => '9fcd6336c6bb',
+			'applicationName' => ($this->settings['application'] ? $this->settings['application'] : __CLASS__),
 		));
 		$form->dataBinding (array (
 			'database' => $this->database,
 			'table' => $this->table,
 			'data' => $data,
 			'lookupFunction' => array ('database', 'lookup'),
+			'simpleJoin' => $this->settings['simpleJoin'],
 			'lookupFunctionParameters' => $this->settings['lookupFunctionParameters'],
 			'lookupFunctionAppendTemplate' => "<a href=\"{$this->baseUrl}/" . ($this->includeDatabaseUrlPart ? '%database/' : '') . "%table/\" class=\"noarrow\" tabindex=\"998\" title=\"Click here to open a new window for editing these values; then click on refresh.\" target=\"_blank\"> ...</a>%refreshtabindex999",
 			'includeOnly' => $this->includeOnly,
@@ -1309,12 +1355,20 @@ class sinenomine
 			return $html;
 		}
 		
+		# Run a callback on the record data, if specified
+		if (isSet ($this->settings['callback'][$this->database]) && isSet ($this->settings['callback'][$this->database][$this->table])) {
+			$callback = $this->settings['callback'][$this->database][$this->table];
+			$callbackClass = $callback[0];
+			$callbackMethod = $callback[1];
+			$record = $callbackClass::$callbackMethod ($record);
+		}
+		
 		#!# HACK to get uploading working by flattening the output; basically a special 'database' output format is needed at ultimateForm level
 		if ((isSet ($record['filename']) && isSet ($record['filename'][0]))) {$record['filename'] = $record['filename'][0];}
 		
 		#!# End here if no filename
 		
-		# Update the record
+		# Insert/update the record
 		$databaseAction = ($action == 'edit' ? 'update' : 'insert');
 		$parameterFour = ($databaseAction == 'update' ? array ($this->key => $this->record) : NULL);
 		if (!$result = $this->databaseConnection->$databaseAction ($this->database, $this->table, $record, $parameterFour)) {
@@ -1494,6 +1548,11 @@ class sinenomine
 		# Compile the matches SQL extracts
 		$matchesSql = "\n(" . implode (")\n\t\t\tOR (", $matchesSql) . ')';
 		
+		# Add constraint, which overrides all others, if required
+		if (isSet ($this->settings['constraint'][$this->database]) && isSet ($this->settings['constraint'][$this->database][$this->table])) {
+			$matchesSql = "\n(" . $matchesSql . ') AND ' . $this->settings['constraint'][$this->database][$this->table];
+		}
+		
 		# Construct a query
 		#!# Currently doesn't support joins
 		$query = "SELECT * FROM {$this->database}.{$this->table} WHERE {$matchesSql};";
@@ -1637,10 +1696,11 @@ class sinenomine
 			$tables = $this->databaseConnection->getTables ($database);
 			foreach ($tables as $table) {
 				$fields = $this->databaseConnection->getFields ($database, $table);
+				$simpleJoin = ($this->settings['simpleJoin'] ? array ($database, $table, $tables) : false);
 				foreach ($fields as $field => $attributes) {
 					
 					# If a join is found, add it to the list
-					if ($join = database::convertJoin ($field)) {
+					if ($join = database::convertJoin ($field, $simpleJoin)) {
 						if (($this->database == $join['database']) && ($this->table == $join['table'])) {
 							$joins[$database][$table][$field] = true;
 							
@@ -1765,6 +1825,7 @@ class sinenomine
 		if ($asHtml) {
 			$label = ($labelSupplied === NULL ? $label : $labelSupplied);
 			$labelEntities = htmlspecialchars ($label);
+			if ($action == 'delete') {$labelEntities .= '&hellip;';}
 			$title = array ();
 			if ($tooltips) {$title[] = $tooltip;}
 			if ($asHtmlNewWindow) {$title[] = '(Opens in a new window)';}
@@ -1948,13 +2009,14 @@ class sinenomine
 			$listTableItems = array ();
 			foreach ($tables as $table) {
 				
-				# Create a list of tables and loop through them
+				# Create a list of fields and loop through them
+				$simpleJoin = ($this->settings['simpleJoin'] ? array ($database, $table, $tables) : false);
 				$fields = $this->databaseConnection->getFields ($database, $table);
 				$listFieldItems = array ();
 				foreach ($fields as $field) {
 					
 					# Construct HTML for the joins if one exists
-					$join = database::convertJoin ($field['Field']);
+					$join = database::convertJoin ($field['Field'], $simpleJoin);
 					$joinedToHtml = ($join ? ('&nbsp;&nbsp;(joined to <a href="#' . htmlspecialchars ("{$join['database']}.{$join['table']}") . '">' . htmlspecialchars ("{$join['database']}.{$join['table']}") . '</a>)') : '');
 					
 					# Construct HTML showing the collation
@@ -2009,10 +2071,11 @@ class sinenomine
 			$this->databaseConnection = $databaseConnection;
 		}
 		
-		# Use the pre-computed joins, or compute them
+		# Use the pre-computed joins, or compute them if there are none
 		if ($joins === false) {
 			foreach ($fields as $fieldname => $fieldAttributes) {
-				if ($matches = database::convertJoin ($fieldAttributes['Field'])) {
+				$simpleJoin = ($this->settings['simpleJoin'] ? array ($this->database, $this->table, $this->tables) : false);
+				if ($matches = database::convertJoin ($fieldAttributes['Field'], $simpleJoin)) {
 					$joins[$fieldname] = $matches;
 				}
 			}
