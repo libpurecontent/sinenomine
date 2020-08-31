@@ -100,7 +100,8 @@ class sinenomine
 		'hideTableIntroduction'	=> false,	// Hide text "This table, X.Y., contains ..." and "You can [+ add a record]"
 		'fieldFiltering' => false,	// Whether to enable the field filtering interface; string database.table.field for storage of the user data
 		'fieldFilteringCheckboxesTruncate' => 25,	// Whether to truncate field filtering checkboxes text
-		'tableCommentsInSelectionList' => false,	// Whether the table comments should be shown in a table selection list (rather than the table name itself)
+		'tableCommentsInSelectionList' => false,	// Whether the table comments should be shown in a table selection list
+		'tableCommentsInSelectionListOnly' => false,	// Whether the table comments should be shown in a table selection list only, i.e. rather than the table name itself
 		'formDiv' => 'graybox lines',
 		'richtextEditorBasePath'			=> '/_ckeditor/',					# Global default setting for of the editor files
 		'richtextEditorToolbarSet'			=> 'pureContent',					# Global default setting for richtext editor toolbar set
@@ -137,6 +138,9 @@ class sinenomine
 		),
 		'edit' => array (
 			'description' => 'Edit a record',
+		),
+		'export' => array (
+			'description' => 'Export a table',
 		),
 		'clone' => array (
 			'description' => 'Clone a record',
@@ -531,6 +535,7 @@ class sinenomine
 				}
 			}
 			$html .= "\n<p>Please select a table (or add [+] a record):</p>";
+			asort ($tables);
 			$html .= $this->linklist ($this->database, $tables, false, $addAddLink = true, $this->settings['listingsShowTotals']);
 			$this->action = NULL;
 			return $html;
@@ -715,7 +720,11 @@ class sinenomine
 			$label = $value;
 			if (!$isDatabases && $this->settings['tableCommentsInSelectionList']) {
 				$item = $indexOrKey;
-				$label = "{$value} [{$item}]";
+				if ($this->settings['tableCommentsInSelectionListOnly']) {
+					$label = $value;
+				} else {
+					$label = "{$value} [{$item}]";
+				}
 			}
 			
 			# Define the link for the current item
@@ -790,8 +799,14 @@ class sinenomine
 			$constraintsSql = 'WHERE ' . $this->settings['constraint'][$this->database][$this->table];
 		}
 		
+		# Add specific sorting based on name hinting
+		$orderBySql = $orderBy;
+		if ($orderBy == 'ipaddress') {
+			$orderBySql = 'INET_ATON(ipaddress)';
+		}
+		
 		# Compile the SQL for ORDER BY
-		$orderBySql = "{$orderBy}{$direction}" . (($orderBy != $this->key) ? ",{$this->key}" : '');
+		$orderBySql = "{$orderBySql}{$direction}" . (($orderBy != $this->key) ? ",{$this->key}" : '');
 		
 		# Determine whether to use pagination
 		$usePagination = ($this->settings['pagination'] && $fullView);
@@ -1016,9 +1031,10 @@ class sinenomine
 		if (!$data) {	// Do not add text when data has been pre-supplied
 			if (!$this->settings['hideTableIntroduction']) {
 				$html .= "\n<p>This table, " . $this->createLink ($this->database) . ".{$this->tableEntities}, contains a total of <strong>" . ($totalRecords == 1 ? 'one record' : "{$totalRecords} records") . '</strong> (each with ' . ($totalFields == 1 ? 'one field' : "{$totalFields} fields") . ($totalFields != $totalFieldsUnfiltered ? ' shown' : '') . '), ' . ($allRecords ? 'with <strong>' . ($totalRecords == 1 ? 'this record' : 'all records') : 'of which <strong>' . ($visibleRecords == 1 ? 'one record is' : "{$visibleRecords} records are")) . ' listed below</strong>. You can switch to ' . ($fullView ? $this->createLink ($this->database, $this->table, NULL, 'listing', 'quick index', 'action button quicklist') . ' mode.' : $this->createLink ($this->database, $this->table, NULL, NULL, 'full-entry view', 'action button list') . ' (default) mode.') . '</p>';
-				$html .= "\n<p>You can " . $this->createLink ($this->database, $this->table, NULL, 'add', 'add a record', 'action button add') . '.</p>';
 			}
 			$html .= $this->searchBox (false);
+			$html .= "\n<p class=\"right\">" . $this->createLink ($this->database, $this->table, NULL, 'export', 'Export table', 'action button export') . '</p>';
+			$html .= "\n<p>You can " . $this->createLink ($this->database, $this->table, NULL, 'add', 'add a record', 'action button add') . '.</p>';
 		}
 		$html .= $paginationHtml;
 		$html .= $filterFieldsHtml;
@@ -1142,6 +1158,21 @@ class sinenomine
 	{
 		# Return the HTML
 		return $this->index ($fullView = false);
+	}
+	
+	
+	# Function to export all records in a table in full
+	private function export ()
+	{
+		# Buffer and discard all current output so far
+		ob_get_clean ();
+		
+		# Export the data
+		$query = "SELECT * FROM {$this->database}.{$this->table};";
+		$this->databaseConnection->serveCsv ($query, array (), $this->table);
+		
+		# End
+		exit;
 	}
 	
 	
@@ -1317,9 +1348,6 @@ class sinenomine
 			'richtextEditorFileBrowser'			=> $this->settings['richtextEditorFileBrowser'],
 			'richtextEditorConfig.docType'		=> $this->settings['richtextEditorConfig.docType'],
 			'mailAdminErrors' => true,
-			'antispam' => true,
-			'antispamUrlsThreshold' => 4,
-			// 'akismetApiKey' => '9fcd6336c6bb',
 			'applicationName' => ($this->settings['application'] ? $this->settings['application'] : __CLASS__),
 		));
 		$form->dataBinding (array (
@@ -2023,7 +2051,7 @@ class sinenomine
 					$collationHtml = '';
 					if ($field['Collation']) {
 						$collationHtml = ' [' . $field['Collation'] . ']';
-						if ($field['Collation'] != 'utf8_unicode_ci') {
+						if ($field['Collation'] != 'utf8mb4_unicode_ci') {
 							$collationHtml = "<span class=\"warning\">{$collationHtml}</span>";
 						}
 					}
@@ -2389,6 +2417,7 @@ class sinenomine
 			a.clone {background-image: url(/images/icons/application_double.png);}
 			a.delete {background-image: url(/images/icons/cross.png);}
 			a.edit {background-image: url(/images/icons/page_white_edit.png);}
+			a.export {background-image: url(/images/icons/application_view_columns.png);}
 			a.list {background-image: url(/images/icons/application_view_detail.png);}
 			a.quicklist {background-image: url(/images/icons/application_side_list.png);}
 			a.view {background-image: url(/images/icons/page.png);}
