@@ -88,7 +88,7 @@ class sinenomine
 		'successfulRecordRedirect' => false,	// Whether to redirect to a successfully-submitted (created/edited) record and show a flash
 		'showViewLink' => false,	// Whether to show the redundant 'view' link in the record listings
 		'compressWhiteSpace' => true,	// Whether to compress whitespace between table cells in the HTML
-		'reserved' => array ('cluster', 'information_schema', 'mysql'),
+		'reserved' => array ('cluster', 'information_schema', 'mysql', 'performance_schema', 'phpmyadmin', 'sys'),
 		'logfile' => false,
 		'application' => false,	// Name of a calling application
 		'intelligence' => true,	// Whether to enable dataBinding intelligence
@@ -98,6 +98,8 @@ class sinenomine
 		'phpmyadmin' => false,	// The base of a PhpMyAdmin instance if links to equivalent pages are wanted
 		'queryTerm'	=> 'q',
 		'hideTableIntroduction'	=> false,	// Hide text "This table, X.Y., contains ..." and "You can [+ add a record]"
+		'hideSearchBox' => false,			// Hide search box above main table
+		'hideExport' => false,				// Hide export table button
 		'fieldFiltering' => false,	// Whether to enable the field filtering interface; string database.table.field for storage of the user data
 		'fieldFilteringCheckboxesTruncate' => 25,	// Whether to truncate field filtering checkboxes text
 		'tableCommentsInSelectionList' => false,	// Whether the table comments should be shown in a table selection list
@@ -114,6 +116,7 @@ class sinenomine
 		'callback'	=> array (),	// Whether to register a callback class+method for a specific database/table/action, specified as a nested array
 		'constraint' => array (),	// Whether to register an SQL extract constraint for a specific database/table/action, specified as a nested array
 		'moveDeleteToEnd' => false,	// Whether to show the Delete link in the index view at the end (defaults to showing alongside the Edit/Clone buttons)
+		'truncateValues' => false,	// Whether to truncate values in the main data table, and if so by how many characters
 	);
 	
 	
@@ -773,6 +776,9 @@ class sinenomine
 		$apiOverrideInUseOrderBy = false;
 		if (isSet ($_GET['orderby']) && array_key_exists ($_GET['orderby'], $this->fields)) {	// NB a _GET['orderby'] that is not valid is ignored so will not override an API-supplied orderby
 			$orderBy = $_GET['orderby'];
+		} else if ($this->settings['orderby'] && array_key_exists ($this->table, $this->settings['orderby'])) {	// i.e. if no URL value is specifically requested by the user but an 'orderby' is set by the API
+			$orderBy = $this->settings['orderby'][$this->table];
+			$apiOverrideInUseOrderBy = true;	// Used to enable orderby=id in the link, which otherwise is never generated
 		} else if ($this->orderby && array_key_exists ($this->orderby[0], $this->fields)) {	// i.e. if no URL value is specifically requested by the user but an 'orderby' is set by the API
 			$orderBy = $this->orderby[0];
 			$apiOverrideInUseOrderBy = true;	// Used to enable orderby=id in the link, which otherwise is never generated
@@ -900,6 +906,9 @@ class sinenomine
 		$totalFieldsUnfiltered = count ($this->fields);
 		$filterFieldsHtml = $this->filterFields ();
 		
+		# Convert booleans to ticks
+		$this->data = application::booleansToTicks ($this->data, $this->fields);
+		
 		# Start a table, adding in metadata in full-view mode
 		$table = array ();
 		
@@ -964,8 +973,19 @@ class sinenomine
 			# Add all the data in full view mode
 			if ($fullView) {
 				foreach ($attributes as $field => $value) {
-					if (!isSet ($this->fields[$field])) {continue;}	// Skip non-visible fields
-					$fieldname = $field . ' ' . $this->fields[$field]['_type'];	// Add the class to the underlying column key
+					
+					# Skip non-visible fields
+					if (!isSet ($this->fields[$field])) {continue;}
+					
+					# Add the class to the underlying column key
+					$fieldname = $field . ' ' . $this->fields[$field]['_type'];
+					
+					# Truncate if required
+					if ($this->settings['truncateValues']) {
+						$value = application::str_truncate ($value, $this->settings['truncateValues'], false, false, true, $htmlMode = false);
+					}
+					
+					# Register cell
 					$table[$key][$fieldname] = str_replace (array ("\r\n", "\n"), '<br />', htmlspecialchars ($value));
 				}
 			}
@@ -1032,8 +1052,12 @@ class sinenomine
 			if (!$this->settings['hideTableIntroduction']) {
 				$html .= "\n<p>This table, " . $this->createLink ($this->database) . ".{$this->tableEntities}, contains a total of <strong>" . ($totalRecords == 1 ? 'one record' : "{$totalRecords} records") . '</strong> (each with ' . ($totalFields == 1 ? 'one field' : "{$totalFields} fields") . ($totalFields != $totalFieldsUnfiltered ? ' shown' : '') . '), ' . ($allRecords ? 'with <strong>' . ($totalRecords == 1 ? 'this record' : 'all records') : 'of which <strong>' . ($visibleRecords == 1 ? 'one record is' : "{$visibleRecords} records are")) . ' listed below</strong>. You can switch to ' . ($fullView ? $this->createLink ($this->database, $this->table, NULL, 'listing', 'quick index', 'action button quicklist') . ' mode.' : $this->createLink ($this->database, $this->table, NULL, NULL, 'full-entry view', 'action button list') . ' (default) mode.') . '</p>';
 			}
-			$html .= $this->searchBox (false);
-			$html .= "\n<p class=\"right\">" . $this->createLink ($this->database, $this->table, NULL, 'export', 'Export table', 'action button export') . '</p>';
+			if (!$this->settings['hideSearchBox']) {
+				$html .= $this->searchBox (false);
+			}
+			if (!$this->settings['hideExport']) {
+				$html .= "\n<p class=\"right\">" . $this->createLink ($this->database, $this->table, NULL, 'export', 'Export table', 'action button export') . '</p>';
+			}
 			$html .= "\n<p>You can " . $this->createLink ($this->database, $this->table, NULL, 'add', 'add a record', 'action button add') . '.</p>';
 		}
 		$html .= $paginationHtml;
@@ -1321,6 +1345,20 @@ class sinenomine
 						unset ($attributes[$field][$key]);
 						if (!$attributes[$field]) {			// Remove now-emptied attributes
 							unset ($attributes[$field]);
+						}
+					}
+				}
+			}
+		}
+		
+#!# Need to find the ultimate cause of the bug - may be because an auto ID isn't known at the point of insert
+		# Fix up cases where image fields contain simply '1'
+		if ($data) {
+			foreach ($attributes as $fieldname => $widgetAttributes) {
+				if (isSet ($widgetAttributes['forcedFileName'])) {		// I.e. if identified as a widget liable to this problem
+					if (isSet ($data[$fieldname])) {
+						if ($data[$fieldname] == '1') {
+							$data[$fieldname] = $data[$this->key] . '.jpg';
 						}
 					}
 				}
@@ -2071,8 +2109,25 @@ class sinenomine
 				$listTableItems[] = '<a name="' . htmlspecialchars ("{$database}.{$table}") . '">' . ($this->settings['highlightMainTable'] && ($database == $table) ? '<strong>' : '') . $this->createLink ($database, $table, NULL, NULL, NULL, (($table == 'tallis') ? 'tallis' : '')) . ($this->settings['highlightMainTable'] && ($database == $table) ? '</strong>' : '') . application::htmlUl ($listFieldItems, 4, 'normal');
 			}
 			
+			# Do not show known software in detail
+			$knownStructures = array (
+				'^wp_'					=> 'Wordpress',
+				'^oc_address$'			=> 'OpenCart',
+				'^oc_account_terms$'	=> 'ownCloud',
+				'^acknowledges$'		=> 'Zabbix',
+			);
+			foreach ($knownStructures as $regexp => $softwareName) {
+				if (preg_match ("/{$regexp}/", $tables[0])) {
+					$listTableItems = array ("[{$softwareName} database structure]");
+					break;
+				}
+			}
+			
+			# Compile the tables display
+			$tablesListing = application::htmlUl ($listTableItems, 3, 'spaced');
+			
 			# Add the database and its tables
-			$listDatabaseItems[] = '<a name="' . htmlspecialchars ($database) . '">' . $this->createLink ($database) . application::htmlUl ($listTableItems, 3, 'spaced');
+			$listDatabaseItems[] = '<a name="' . htmlspecialchars ($database) . '">' . $this->createLink ($database) . $tablesListing;
 		}
 		
 		# Add the server and its databases
