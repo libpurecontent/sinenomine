@@ -116,7 +116,8 @@ class sinenomine
 		'callback'	=> array (),	// Whether to register a callback class+method for a specific database/table/action, specified as a nested array
 		'constraint' => array (),	// Whether to register an SQL extract constraint for a specific database/table/action, specified as a nested array
 		'moveDeleteToEnd' => false,	// Whether to show the Delete link in the index view at the end (defaults to showing alongside the Edit/Clone buttons)
-		'truncateValues' => false,	// Whether to truncate values in the main data table, and if so by how many characters
+		'truncateValues' => false,	// In table display mode, whether to truncate values in the main data table, and if so by how many characters
+		'autofocus' => false,
 	);
 	
 	
@@ -616,7 +617,7 @@ class sinenomine
 			if ($this->action == 'index') {$this->action = 'record';}
 			if (!$this->data = $this->databaseConnection->selectOne ($this->database, $this->table, array ($this->key => $recordId))) {
 				if ($this->action != 'add') {
-					$html .= "\n<p>There is no such record <em>" . htmlspecialchars ($recordId) . '</em>. Did you intend to ' . $this->createLink ($this->database, $this->table, $recordId, 'add', 'create a new record' . ($this->keyIsAutomatic ? '' : ' with that key'), 'action button add') . '?</p>';
+					$html .= "\n<p>There is no such record <em>" . htmlspecialchars ($recordId) . '</em>. Did you intend to ' . $this->createLink ($this->database, $this->table, NULL, 'add', 'create a new record' . ($this->keyIsAutomatic ? '' : ' with that key'), 'action button add') . '?</p>';
 					$this->action = NULL;
 					return $html;
 				}
@@ -964,7 +965,8 @@ class sinenomine
 			if ($this->settings['showViewLink']) {
 				$table[$key]['View'] = $this->createLink ($this->database, $this->table, $key, NULL, 'View', 'action view');
 			}
-			$actions = array ('edit', 'clone', 'delete');
+//			$actions = array ('edit', 'clone', 'delete');
+			$actions = array ('edit', 'delete');
 			foreach ($actions as $action) {
 				$title = ucfirst ($action);
 				$table[$key][$title] = $this->createLink ($this->database, $this->table, $key, $action, ucfirst ($action), "action {$action}");
@@ -1387,6 +1389,7 @@ class sinenomine
 			'richtextEditorConfig.docType'		=> $this->settings['richtextEditorConfig.docType'],
 			'mailAdminErrors' => true,
 			'applicationName' => ($this->settings['application'] ? $this->settings['application'] : __CLASS__),
+			'autofocus' => $this->settings['autofocus'],
 		));
 		$form->dataBinding (array (
 			'database' => $this->database,
@@ -1426,7 +1429,15 @@ class sinenomine
 			$callback = $this->settings['callback'][$this->database][$this->table];
 			$callbackClass = $callback[0];
 			$callbackMethod = $callback[1];
-			$record = $callbackClass::$callbackMethod ($record);
+			if (is_object ($callbackClass)) {
+				$record = ${callbackClass}->${callbackMethod} ($record, $errorHtml);
+			} else {
+				$record = $callbackClass::$callbackMethod ($record, $errorHtml);
+			}
+			if ($errorHtml) {
+				$html .= $errorHtml;
+				return $html;
+			}
 		}
 		
 		#!# HACK to get uploading working by flattening the output; basically a special 'database' output format is needed at ultimateForm level
@@ -1460,7 +1471,7 @@ class sinenomine
 				if ($formFieldsSpecification[$fieldname]['type'] == 'upload') {
 					if (isSet ($widgetAttributes['forcedFileName'])) {
 						if ($selectedUniqueableField = $this->uniqueableFieldSpecified ($widgetAttributes['forcedFileName'], $uniqueableFields)) {
-							$newlyUploadedFile = $widgetAttributes['directory'] . $record[$fieldname][0];
+							$newlyUploadedFile = $widgetAttributes['directory'] . (is_array ($record[$fieldname][0]) ? $record[$fieldname][0] : $record[$fieldname]);
 							$extension = pathinfo ($newlyUploadedFile, PATHINFO_EXTENSION);
 							$newFilename = $recordIncludingKey[$selectedUniqueableField] . '.' . $extension;
 							$moveTo = $widgetAttributes['directory'] . $newFilename;
