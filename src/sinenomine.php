@@ -180,13 +180,6 @@ class sinenomine
 	# Constructor
 	public function __construct ($settings = array (), $databaseConnection = NULL, &$html = NULL)
 	{
-		# Load required libraries
-		require_once ('application.php');
-		require_once ('database.php');
-		require_once ('pagination.php');
-		require_once ('pureContent.php');
-		// session.php is loaded below, as it depends on settings which are dependent on application.php
-		
 		# Add additional defaults
 		$this->defaults['administratorEmail'] = $_SERVER['SERVER_ADMIN'];
 		//$this->defaults['application'] = __CLASS__;
@@ -248,6 +241,7 @@ class sinenomine
 			
 			# In GUI mode, start a session to obtain credentials dynamically
 			if ($this->settings['gui'] && $databaseConnection === NULL) {
+				#!# Needs composer support
 				require_once ('session.php');
 				$session = new session ($this->settings, $logout);
 				
@@ -1131,7 +1125,6 @@ class sinenomine
 		$html  = '';
 		
 		# Create the form
-		require_once ('ultimateForm.php');
 		$form = new form (array (
 			'databaseConnection' => $this->databaseConnection,
 			'displayRestrictions' => false,
@@ -1379,7 +1372,6 @@ class sinenomine
 		}
 		
 		# Load and create a form
-		require_once ('ultimateForm.php');
 		$form = new form (array (
 			'databaseConnection' => $this->databaseConnection,
 			'displayRestrictions' => false,
@@ -1940,7 +1932,6 @@ class sinenomine
 		}
 		
 		# Load and create a form
-		require_once ('ultimateForm.php');
 		$form = new form (array (
 			'databaseConnection' => $this->databaseConnection,
 			'formCompleteText' => false,
@@ -2165,10 +2156,6 @@ class sinenomine
 	# Function (which can be run statically) to convert key numbers/names in a set of records
 	private function convertJoinData ($data, $fields, $databaseConnection = false, $joins = false, $showNumberFields = false, $unsetNumericKey = true, $intJoinZeroClear = true, $modifyDisplay = true, $modifyDisplayConvertUrls = true)
 	{
-		# Load required libraries (only really required if running statically)
-		require_once ('application.php');
-		require_once ('database.php');
-		
 		# Return the data unmodified if there is none or it is not an array
 		if (!$data || (!is_array ($data))) {return $data;}
 		
@@ -2294,7 +2281,6 @@ class sinenomine
 				if ($value == '0000-00-00 00:00:00') {
 					$value = NULL;
 				} else {
-					require_once ('timedate.php');
 					$value = timedate::convertTimestamp ($value);
 				}
 			}
@@ -2320,7 +2306,6 @@ class sinenomine
 			
 			# Convert URLs if required
 			if ($convertUrls) {
-				require_once ('application.php');
 				$value = application::makeClickableLinks ($value, false, '[Link]');
 			}
 			
