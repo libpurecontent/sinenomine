@@ -1,5 +1,14 @@
 <?php
 
+/*
+ * Coding copyright Martin Lucas-Smith, University of Cambridge, 2002-23
+ * Version 1.0.0
+ * Distributed under the terms of the GNU Public Licence - https://www.gnu.org/licenses/gpl-3.0.html
+ * Requires PHP 5.3+ with register_globals set to 'off'
+ * Download latest from: https://download.geog.cam.ac.uk/projects/sinenomine/
+ */
+
+
 #!# Joins to empty tables seem to revert to a standard input field rather than an empty SELECT list
 #!# Need to test data object editing version
 #!# How are unknown field types dealt with?
@@ -886,7 +895,6 @@ class sinenomine
 		}
 		$visibleRecords = count ($this->data);
 		
-		
 		# Assign the count if pagination has not been set
 		if (!$usePagination) {
 			$totalRecords = count ($this->data);
@@ -1311,7 +1319,8 @@ class sinenomine
 		}
 		
 		# Deal with automatic keys (which will now be non-editable)
-		if (($action != 'edit') && ($action != 'clone') && $this->keyIsAutomatic) {
+		#!# Bug that if cloning a record whose ID is a JOIN field with UNIQUE KEY the dropdown created will still allow an existing ID value to be submitted, which will then be rejected by the database
+		if (($action != 'edit') && $this->keyIsAutomatic) {
 			#!# The first four values are a workaround for just placing the text '(automatically assigned)'
 			$keyAttributes['type'] = 'select';
 			$keyAttributes['forceAssociative'] = true;
@@ -1332,8 +1341,10 @@ class sinenomine
 		}
 		
 		# If cloning, NULL out the key value if required
-		if ($action == 'clone' && !$this->settings['clonePrefillsSourceKey']) {
-			$data[$this->key] = NULL;
+		if ($action == 'clone') {
+			if ($this->keyIsAutomatic || !$this->settings['clonePrefillsSourceKey']) {
+				$data[$this->key] = NULL;
+			}
 		}
 		
 		# Merge in the key handling, adding to anything explicitly supplied
@@ -1430,7 +1441,7 @@ class sinenomine
 			$callbackClass = $callback[0];
 			$callbackMethod = $callback[1];
 			if (is_object ($callbackClass)) {
-				$record = ${callbackClass}->${callbackMethod} ($record, $errorHtml);
+				$record = $callbackClass->$callbackMethod ($record, $errorHtml);
 			} else {
 				$record = $callbackClass::$callbackMethod ($record, $errorHtml);
 			}
@@ -2100,6 +2111,7 @@ class sinenomine
 					$collationHtml = '';
 					if ($field['Collation']) {
 						$collationHtml = ' [' . $field['Collation'] . ']';
+						#!# Outdated check - and should be parameterised
 						if ($field['Collation'] != 'utf8mb4_unicode_ci') {
 							$collationHtml = "<span class=\"warning\">{$collationHtml}</span>";
 						}
@@ -2250,7 +2262,7 @@ class sinenomine
 				
 				# Put the new value into the data
 				#!# Ideally surround this with <span class="comment"> but requires difficult changes to the htmlspecialchars handling
-				$conversions[$field][$key] = implode (utf8_encode (' » '), $record);
+				$conversions[$field][$key] = implode (" \u{2013} ", $record);	// \u{2013} is ndash character
 			}
 		}
 		
