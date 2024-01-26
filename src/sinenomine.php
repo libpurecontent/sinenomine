@@ -1,14 +1,5 @@
 <?php
 
-/*
- * Coding copyright Martin Lucas-Smith, University of Cambridge, 2002-23
- * Version 1.0.0
- * Distributed under the terms of the GNU Public Licence - https://www.gnu.org/licenses/gpl-3.0.html
- * Requires PHP 5.3+ with register_globals set to 'off'
- * Download latest from: https://download.geog.cam.ac.uk/projects/sinenomine/
- */
-
-
 #!# Joins to empty tables seem to revert to a standard input field rather than an empty SELECT list
 #!# Need to test data object editing version
 #!# How are unknown field types dealt with?
