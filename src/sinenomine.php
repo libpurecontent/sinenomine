@@ -408,10 +408,6 @@ class sinenomine
 			$this->settings['deny'] = false;
 		}
 		
-		# Provide encoded versions of particular class variables for use in pages
-		$this->hostname = $this->databaseConnection->hostname;
-		$this->hostnameEntities = htmlspecialchars ($this->hostname);
-		
 		# End if no valid action is specified
 		if (!$this->action) {
 			$html .= "\n<p>No valid action was specified.</p>";
@@ -669,7 +665,7 @@ class sinenomine
 		
 		# Compile the list
 		$items = array ();
-		if ($this->hostname) {$items[] = ($convertEntities ? $this->hostnameEntities : $this->hostname);}
+		$items[] = ($convertEntities ? htmlspecialchars ($this->settings['hostname']) : $this->settings['hostname']);
 		if ($this->database) {$items[] = ($convertEntities ? $this->databaseEntities : $this->database);}
 		if ($this->table) {$items[] = ($convertEntities ? $this->tableEntities : $this->table);}
 		if ($this->record) {$items[] = ($convertEntities ? $this->recordEntities : $this->record);}
@@ -1873,7 +1869,7 @@ class sinenomine
 		# If no database is supplied, use the hostname
 		if ($database === NULL) {
 			$link = $this->baseUrl . '/';
-			$label = $this->hostnameEntities;
+			$label = htmlspecialchars ($this->settings['hostname']);
 			$tooltip = 'Hostname';
 		}
 		
