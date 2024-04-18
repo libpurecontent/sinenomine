@@ -1,0 +1,59 @@
+# Sinenomine UI directives (needed only for GUI mode)
+
+# Load using:
+#	# Sinenomine GUI
+#	Include /path/to/sinenomine/.httpd.conf.extract.txt
+#	Use MacroSinenomine "/sinenomine"
+
+
+<Macro MacroSinenomine $baseUrl>
+	
+	# Application routing
+	RewriteEngine On
+	RewriteRule ^$baseUrl/feedback.html - [L]
+	RewriteRule ^$baseUrl/favicon.ico - [L]
+	RewriteRule ^$baseUrl/logout.html $baseUrl/index.html?do=logout [L]
+	RewriteRule ^$baseUrl/structure.html $baseUrl/index.html?do=structure [L]
+	RewriteRule ^$baseUrl/overflow.html $baseUrl/index.html?do=overflow [L]
+	RewriteRule ^$baseUrl/sitetech/ - [L]
+	RewriteRule ^$baseUrl/images/icons/ - [L]
+	RewriteRule ^(/_ckeditor/|/_ckfinder/) - [L]
+	
+	# Main page
+	RewriteRule ^$baseUrl/$ $baseUrl/index.html [L,QSA]
+	RewriteRule ^$baseUrl/index.html$ - [L]
+	
+	# Databases
+	RewriteRule ^$baseUrl/([^/]+)/$ $baseUrl/index.html?database=$1 [L]
+	RewriteRule ^$baseUrl/([^/]+)/(index|listing|add).html$ $baseUrl/index.html?database=$1 [L]
+	
+	# Tables
+	RewriteRule ^$baseUrl/([^/]+)/([^/]+)/$ $baseUrl/index.html?database=$1&table=$2 [L,QSA]
+	RewriteRule ^$baseUrl/([^/]+)/([^/]+)/(index|listing|add|export).html$ $baseUrl/index.html?database=$1&table=$2&do=$3 [L]
+	RewriteRule ^$baseUrl/([^/]+)/([^/]+)/(search).html$ $baseUrl/index.html?database=$1&table=$2&do=$3 [L,QSA]
+	RewriteRule ^$baseUrl/([^/]+)/([^/]+)/page([0-9]+).html$ $baseUrl/index.html?database=$1&table=$2&page=$3 [L,QSA]
+	RewriteRule ^$baseUrl/([^/]+)/([^/]+)/all.html$ $baseUrl/index.html?database=$1&table=$2&page=all [L,QSA]
+	
+	# Records
+	RewriteRule ^$baseUrl/([^/]+)/([^/]+)/([^/]+)/$ $baseUrl/index.html?database=$1&table=$2&record=$3 [L]
+	RewriteRule ^$baseUrl/([^/]+)/([^/]+)/([^/]+)/(index|add|edit|clone|delete).html$ $baseUrl/index.html?database=$1&table=$2&record=$3&do=$4 [L]
+	
+	# Support missing slashes, for three levels; this block must come after all others to avoid .html catching
+	RewriteRule ^$baseUrl/([^/]+)$ $baseUrl/$1/ [L,R=301]
+	RewriteRule ^$baseUrl/([^/]+)/([^/]+)$ $baseUrl/$1/$2/ [L,R=301]
+	RewriteRule ^$baseUrl/([^/]+)/([^/]+)/([^/]+)$ $baseUrl/$1/$2/$3/ [L,R=301]
+	
+	# Editor files
+	<LocationMatch (/_ckeditor/|/_ckfinder/)>
+		php_admin_value auto_prepend_file none
+		php_admin_value auto_append_file none
+	</LocationMatch>
+	
+	# Enable file uploads
+	php_admin_value file_uploads 1
+	
+	# Enable output buffering
+	php_value output_buffering 8192
+	
+</Macro>
+

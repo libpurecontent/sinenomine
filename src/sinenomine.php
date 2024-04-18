@@ -8,6 +8,7 @@
 #!# Ensure that BINARY values are not put into the HTML
 #!# User administration section
 #!# Need a nice API like $sinenomine->database->field->orderby('date');
+#!# Problem of disallowing "feedback.html", "sitetech", etc. as potential database names
 
 
 
