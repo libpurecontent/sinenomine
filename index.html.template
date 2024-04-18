@@ -1,0 +1,16 @@
+<?php
+
+# Boostrap file for running in GUI mode as a standalone instance
+
+# Settings
+$settings = array (
+	'username' => 'my_username',
+	'password' => 'my_password',
+	'gui' => true,
+);
+
+# Load and run the application with the above settings
+require_once ('vendor/autoload.php');
+new sinenomine ($settings);
+
+?>
