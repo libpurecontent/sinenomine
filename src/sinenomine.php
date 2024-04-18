@@ -65,6 +65,7 @@ class sinenomine
 		'displayErrorDebugging' => false,	// Whether to show error debug info on-screen
 		'highlightMainTable'	=> true,	// Whether to make bold a table whose name is the same as the database
 		'listingsShowTotals'	=> true,	// Whether to show the total number of records in each table when listings
+		'defaultCollation' => 'utf8mb4_0900_ai_ci',		// The expected default collation
 		'attributes' => array (),
 		'orderby' => array (),	// Orderby default for a specific area
 		'direction' => array (),	// Direction default for a specific area
@@ -2087,8 +2088,7 @@ class sinenomine
 					$collationHtml = '';
 					if ($field['Collation']) {
 						$collationHtml = ' [' . $field['Collation'] . ']';
-						#!# Outdated check - and should be parameterised
-						if ($field['Collation'] != 'utf8mb4_unicode_ci') {
+						if ($field['Collation'] != $this->settings['defaultCollation']) {
 							$collationHtml = "<span class=\"warning\">{$collationHtml}</span>";
 						}
 					}
