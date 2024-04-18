@@ -101,7 +101,7 @@ class session
 		# Take the user to the same page in order to clear the form's POSTed variables and thereby prevent confusion in cases of refreshed pages
 		if (isSet ($_POST['username'])) {
 			$location = $_SERVER['REQUEST_URI'];
-			header ('Location: http://' . $_SERVER['SERVER_NAME'] . $location);
+			header ('Location: ' . (isset ($_SERVER['HTTPS']) ? 'https' : 'http') . '://' . $_SERVER['SERVER_NAME'] . $location);
 			$this->html .= "<p>You have been authenticated. <a href=\"" . htmlspecialchars ($location) . '">Please click here to continue.</a></p>';
 		}
 		
