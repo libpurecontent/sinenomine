@@ -230,10 +230,8 @@ class sinenomine
 			$this->user = $_SERVER['REMOTE_USER'];
 		} else {
 			
-			# In GUI mode, start a session to obtain credentials dynamically
+			# In GUI mode, start a session to obtain credentials dynamically from the user login
 			if ($this->settings['gui'] && $databaseConnection === NULL) {
-				#!# Needs composer support
-				require_once ('session.php');
 				$session = new session ($this->settings, $logout);
 				
 				# Redirect to the front page if logged out, having destroyed the session

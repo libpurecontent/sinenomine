@@ -17,6 +17,6 @@
         "libpurecontent/pagination": "^1.1"
     },
     "autoload": {
-        "psr-0": {"sinenomine": "src/"}
+        "files": ["src/sinenomine.php", "src/session.php"]
     }
 }
