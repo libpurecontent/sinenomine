@@ -13,6 +13,7 @@
 	RewriteRule ^$baseUrl/feedback.html - [L]
 	RewriteRule ^$baseUrl/favicon.ico - [L]
 	RewriteRule ^$baseUrl/logout.html $baseUrl/index.html?do=logout [L]
+	RewriteRule ^$baseUrl/redirect.html - [L]
 	RewriteRule ^$baseUrl/structure.html $baseUrl/index.html?do=structure [L]
 	RewriteRule ^$baseUrl/overflow.html $baseUrl/index.html?do=overflow [L]
 	RewriteRule ^$baseUrl/sitetech/ - [L]
