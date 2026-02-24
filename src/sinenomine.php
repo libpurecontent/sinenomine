@@ -1652,14 +1652,14 @@ class sinenomine
 		$where = array ();
 		$preparedStatementValues = array ();
 		if ($exclude !== false) {
-			$where[] = "{$field} != :exclude";
+			$where[] = "`{$field}` != :exclude";
 			$preparedStatementValues['exclude'] = $exclude;
 		}
-		$where[] = "{$field} IS NOT NULL";
+		$where[] = "`{$field}` IS NOT NULL";
 		$where = ' WHERE (' . implode (' AND ', $where) . ')';
 		
 		# Get the current values (often the list of keys)
-		$query = "SELECT {$field} FROM {$this->database}.{$this->table}{$where} ORDER BY {$field}";
+		$query = "SELECT `{$field}` FROM {$this->database}.{$this->table}{$where} ORDER BY `{$field}`";
 		$values = $this->databaseConnection->getPairs ($query, false, $preparedStatementValues);
 		
 		# Return the values (often the list of keys)
