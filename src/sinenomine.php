@@ -1650,15 +1650,17 @@ class sinenomine
 	{
 		# Add a WHERE clause if excluding
 		$where = array ();
+		$preparedStatementValues = array ();
 		if ($exclude !== false) {
-			$where[] = "{$field} != " . $this->databaseConnection->quote ($exclude);
+			$where[] = "{$field} != :exclude";
+			$preparedStatementValues['exclude'] = $exclude;
 		}
 		$where[] = "{$field} IS NOT NULL";
 		$where = ' WHERE (' . implode (' AND ', $where) . ')';
 		
 		# Get the current values (often the list of keys)
 		$query = "SELECT {$field} FROM {$this->database}.{$this->table}{$where} ORDER BY {$field}";
-		$values = $this->databaseConnection->getPairs ($query);
+		$values = $this->databaseConnection->getPairs ($query, false, $preparedStatementValues);
 		
 		# Return the values (often the list of keys)
 		return $values;
