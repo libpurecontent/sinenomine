@@ -1707,7 +1707,7 @@ class sinenomine
 		$message .= "\n\n\nUser error message:\n{$userErrorMessage}";
 		if ($this->databaseConnection) {
 			if (is_array ($error) && isSet ($error[1])) {
-				$message .= "\n\n" . ucfirst ($this->databaseConnection->vendor) . " error number:\n{$error[1]}";
+				$message .= "\n\n" . ucfirst ($this->databaseConnection->getVendor ()) . " error number:\n{$error[1]}";
 			}
 			if (is_array ($error) && isSet ($error[2])) {
 				$message .= "\n\nError text:\n{$error[2]}";
