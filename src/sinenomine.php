@@ -1390,7 +1390,7 @@ class sinenomine
 			'lookupFunctionParameters' => $this->settings['lookupFunctionParameters'],
 			'lookupFunctionAppendTemplate' => "<a href=\"{$this->baseUrl}/" . ($this->includeDatabaseUrlPart ? '%database/' : '') . "%table/\" class=\"noarrow\" tabindex=\"998\" title=\"Click here to open a new window for editing these values; then click on refresh.\" target=\"_blank\"> ...</a>%refreshtabindex999",
 			'includeOnly' => $this->includeOnly,
-			'exclude' => $this->exclude,
+			'exclude' => $this->settings['exclude'],
 			'attributes' => $attributes,
 			'intelligence' => $this->settings['intelligence'],
 			'int1ToCheckbox' => $this->settings['int1ToCheckbox'],
