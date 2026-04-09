@@ -102,6 +102,7 @@ class sinenomine
 		'hideTableIntroduction'	=> false,	// Hide text "This table, X.Y., contains ..." and "You can [+ add a record]"
 		'hideSearchBox' => false,			// Hide search box above main table
 		'hideExport' => false,				// Hide export table button
+		'hideAddRecord' => false,			// Hide add record button
 		'fieldFiltering' => false,	// Whether to enable the field filtering interface; string database.table.field for storage of the user data
 		'fieldFilteringCheckboxesTruncate' => 25,	// Whether to truncate field filtering checkboxes text
 		'tableCommentsInSelectionList' => false,	// Whether the table comments should be shown in a table selection list
@@ -1049,7 +1050,9 @@ class sinenomine
 			if (!$this->settings['hideExport']) {
 				$html .= "\n<p class=\"right\">" . $this->createLink ($this->database, $this->table, NULL, 'export', 'Export table', 'action button export') . '</p>';
 			}
-			$html .= "\n<p>You can " . $this->createLink ($this->database, $this->table, NULL, 'add', 'add a record', 'action button add') . '.</p>';
+			if (!$this->settings['hideAddRecord']) {
+				$html .= "\n<p>You can " . $this->createLink ($this->database, $this->table, NULL, 'add', 'add a record', 'action button add') . '.</p>';
+			}
 		}
 		$html .= $paginationHtml;
 		$html .= $filterFieldsHtml;
