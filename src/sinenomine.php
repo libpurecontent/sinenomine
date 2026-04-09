@@ -108,6 +108,8 @@ class sinenomine
 		'tableCommentsInSelectionList' => false,	// Whether the table comments should be shown in a table selection list
 		'tableCommentsInSelectionListOnly' => false,	// Whether the table comments should be shown in a table selection list only, i.e. rather than the table name itself
 		'formDiv' => 'graybox lines',
+		'display'							=> 'tables',						# Whether to display the form using 'tables', 'css' (CSS layout) 'paragraphs' or 'template'
+		'displayTemplate'					=> '',								# Either a filename or a (long) string containing placemarkers		#!# Currently applies to all tables, so only useful when run in a single-table context
 		'richtextEditorBasePath'			=> '/_ckeditor/',					# Global default setting for of the editor files
 		'richtextEditorToolbarSet'			=> 'pureContent',					# Global default setting for richtext editor toolbar set
 		'richtextEditorAreaCSS'				=> '',								# Global default setting for richtext editor CSS
@@ -1371,6 +1373,8 @@ class sinenomine
 			'rows' => $this->settings['rows'],
 			'picker' => $this->settings['datePicker'],
 			'div' => $this->settings['formDiv'],
+			'display' => $this->settings['display'],
+			'displayTemplate' => $this->settings['displayTemplate'],
 			'submitButtonPosition' => $this->settings['submitButtonPosition'],	# 'both' = Basically a workaround for when there is a refresh button (which then becomes the first 'submit' button, and thus the default action when pressing return)
 			'unsavedDataProtection' => $this->settings['unsavedDataProtection'],
 			'richtextEditorBasePath'			=> $this->settings['richtextEditorBasePath'],
