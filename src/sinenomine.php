@@ -32,6 +32,30 @@ class sinenomine
 	private $orderby = array ();
 	private $direction = array ();
 	private $validation = array ();
+	private $settings;
+	private $baseUrl;
+	private $action;
+	private $logoutUrl;
+	private $structureUrl;
+	private $userIsAdministrator;
+	private $includeDatabaseUrlPart;
+	private $databases;
+	private $phpMyAdminUrl;
+	private $databaseEncoded;
+	private $databaseEntities;
+	private $tables;
+	private $tableComments;
+	private $databaseLink;
+	private $tableEncoded;
+	private $tableEntities;
+	private $tableLink;
+	private $tableStatus;
+	private $fields;
+	private $joins;
+	private $headings;
+	private $keyIsAutomatic;
+	private $recordEntities;
+	private $recordLink;
 	
 	
 	# Specify available arguments as defaults or as NULL (to represent a required argument)
