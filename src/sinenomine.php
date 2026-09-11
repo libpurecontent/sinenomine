@@ -1004,6 +1004,7 @@ class sinenomine
 					}
 					
 					# Register cell
+					if (is_null ($value)) {$value = '';}	// Avoid htmlspecialchars on NULL warnings
 					$table[$key][$fieldname] = str_replace (array ("\r\n", "\n"), '<br />', htmlspecialchars ($value));
 				}
 			}
