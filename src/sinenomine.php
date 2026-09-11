@@ -24,6 +24,7 @@ class sinenomine
 	private $credentialsUser = false;
 	private $data = NULL;	// The data that can be retrieved from >process ()
 	private $key = false;
+	private $quote;
 	private $html = '';
 	private $mainHtml = '';
 	private $includeOnly = array ();
@@ -304,6 +305,9 @@ class sinenomine
 				}
 			}
 		}
+		
+		# Set quote style
+		$this->quote = ($this->settings['vendor'] == 'mysql' ? '`' : '"');
 	}
 	
 	
@@ -898,7 +902,7 @@ class sinenomine
 		if ($data) {
 			$this->data = $data;
 		} else {
-			$query = 'SELECT ' . ($fullView ? '*' : $this->key) . " FROM `{$this->database}`.`{$this->table}` {$constraintsSql} ORDER BY {$orderBySql}{$paginationSql};";
+			$query = 'SELECT ' . ($fullView ? '*' : $this->key) . " FROM {$this->quote}{$this->database}{$this->quote}.{$this->quote}{$this->table}{$this->quote} {$constraintsSql} ORDER BY {$orderBySql}{$paginationSql};";
 			$this->data = $this->databaseConnection->getData ($query, "{$this->database}.{$this->table}");
 		}
 		$visibleRecords = count ($this->data);
@@ -1600,7 +1604,7 @@ class sinenomine
 				
 				# VARCHAR text
 				case (preg_match ('/^(char|varchar)/i', $attributes['Type'])):
-					$matchesSql[$field] = "`{$field}` LIKE '%{$searchPhraseEscaped}%'";
+					$matchesSql[$field] = "{$this->quote}{$field}{$this->quote} LIKE '%{$searchPhraseEscaped}%'";
 					break;
 					
 				# Full-text
@@ -1610,12 +1614,12 @@ class sinenomine
 					break;
 				*/
 				case (preg_match ('/^(text|mediumtext)/i', $attributes['Type'])):
-					$matchesSql[$field] = "`{$field}` LIKE '%{$searchPhraseEscaped}%'";
+					$matchesSql[$field] = "{$this->quote}{$field}{$this->quote} LIKE '%{$searchPhraseEscaped}%'";
 					break;
 					
 				# Enumerated list
 				case (preg_match ('/^(enum)/i', $attributes['Type'])):
-					$matchesSql[$field] = "`{$field}` = '{$searchPhraseEscaped}'";
+					$matchesSql[$field] = "{$this->quote}{$field}{$this->quote} = '{$searchPhraseEscaped}'";
 					break;
 					
 				# Sets
@@ -1625,13 +1629,13 @@ class sinenomine
 					
 				# Floating-point numbers
 				case (preg_match ('/^(float)/i', $attributes['Type']) && is_numeric ($searchPhrase)):
-					$matchesSql[$field] = "`{$field}` = '{$searchPhraseEscaped}'";
+					$matchesSql[$field] = "{$this->quote}{$field}{$this->quote} = '{$searchPhraseEscaped}'";
 					break;
 					
 				# Integer types, including years
 				#!# Doesn't yet support negative integers; cannot use is_int as will never match what is an incoming string
 				case (preg_match ('/^(int|tinyint|smallint|mediumint|bigint|year)/i', $attributes['Type']) && ctype_digit ($searchPhrase)):
-					$matchesSql[$field] = "`{$field}` = '{$searchPhraseEscaped}'";
+					$matchesSql[$field] = "{$this->quote}{$field}{$this->quote} = '{$searchPhraseEscaped}'";
 					break;
 					
 				# Dates
@@ -1684,14 +1688,14 @@ class sinenomine
 		$where = array ();
 		$preparedStatementValues = array ();
 		if ($exclude !== false) {
-			$where[] = "`{$field}` != :exclude";
+			$where[] = "{$this->quote}{$field}{$this->quote} != :exclude";
 			$preparedStatementValues['exclude'] = $exclude;
 		}
-		$where[] = "`{$field}` IS NOT NULL";
+		$where[] = "{$this->quote}{$field}{$this->quote} IS NOT NULL";
 		$where = ' WHERE (' . implode (' AND ', $where) . ')';
 		
 		# Get the current values (often the list of keys)
-		$query = "SELECT `{$field}` FROM {$this->database}.{$this->table}{$where} ORDER BY `{$field}`";
+		$query = "SELECT {$this->quote}{$field}{$this->quote} FROM {$this->database}.{$this->table}{$where} ORDER BY {$this->quote}{$field}{$this->quote}";
 		$values = $this->databaseConnection->getPairs ($query, false, $preparedStatementValues);
 		
 		# Return the values (often the list of keys)
@@ -1711,7 +1715,7 @@ class sinenomine
 	private function getTableComments ($database)
 	{
 		# Get the data
-		$query = "SHOW TABLE STATUS FROM `{$this->database}`";
+		$query = "SHOW TABLE STATUS FROM {$this->quote}{$this->database}{$this->quote}";
 		$data = $this->databaseConnection->getData ($query);
 		
 		# Arrange as an associative array
@@ -2041,8 +2045,8 @@ class sinenomine
 							if (preg_match ("/^{$specification}$/", strtolower ($field['Type']), $matches)) {
 								
 								# Get the highest (max) record for this
-								// $query = "SELECT `{$fieldname}` as highest FROM `{$database}`.`{$table}` ORDER BY `{$fieldname}` DESC LIMIT 1;";
-								$query = "SELECT MAX(`{$fieldname}`) as highest FROM `{$database}`.`{$table}`;";
+								// $query = "SELECT {$this->quote}{$fieldname}{$this->quote} AS highest FROM {$this->quote}{$database}{$this->quote}.{$this->quote}{$table}{$this->quote} ORDER BY {$this->quote}{$fieldname}{$this->quote} DESC LIMIT 1;";
+								$query = "SELECT MAX({$this->quote}{$fieldname}{$this->quote}) AS highest FROM {$this->quote}{$database}{$this->quote}.{$this->quote}{$table}{$this->quote};";
 								$data = $this->databaseConnection->getOne ($query);
 								$highest = $data['highest'];
 								
@@ -2235,7 +2239,7 @@ class sinenomine
 			}
 			
 			# Get the data
-			$query = "SELECT * FROM `{$joins[$field]['database']}`.`{$joins[$field]['table']}` WHERE `{$uniqueField}` REGEXP '(^" . implode ('|', $values) . "$)';";
+			$query = "SELECT * FROM {$this->quote}{$joins[$field]['database']}{$this->quote}.{$this->quote}{$joins[$field]['table']}{$this->quote} WHERE {$this->quote}{$uniqueField}{$this->quote} REGEXP '(^" . implode ('|', $values) . "$)';";
 			$tempData = $this->databaseConnection->getData ($query, "{$joins[$field]['database']}.{$joins[$field]['table']}");
 			
 			# Loop through each data set and convert each record
