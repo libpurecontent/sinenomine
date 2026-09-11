@@ -859,7 +859,7 @@ class sinenomine
 			
 			# Assemble the pagination SQL, if page is not 'all'
 			if (!$allRecords) {
-				$paginationSql = " LIMIT {$offset},{$limit}";
+				$paginationSql = " LIMIT {$limit} OFFSET {$offset}";
 			}
 			
 			# Assemble the pagination HTML
