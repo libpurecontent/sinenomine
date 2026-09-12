@@ -281,6 +281,7 @@ class sinenomine
 					$this->mainHtml = $this->error ('No valid database connection was supplied.');
 				} else {
 					$this->databaseConnection = $databaseConnection;
+					$this->settings['vendor'] = $databaseConnection->getVendor ();	// Ensure the setting is in sync with what is actually supplied
 				}
 			}
 		}
