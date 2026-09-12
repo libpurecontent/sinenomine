@@ -251,7 +251,7 @@ class sinenomine
 		
 		# If credentials are supplied, use these in preference to session creation
 		if ($this->settings['hostname'] && $this->settings['username'] && $this->settings['password']) {
-			$this->databaseConnection = new database ($this->settings['hostname'], $this->settings['username'], $this->settings['password'], NULL, 'mysql', $this->settings['logfile']);
+			$this->databaseConnection = new database ($this->settings['hostname'], $this->settings['username'], $this->settings['password'], NULL, $this->settings['vendor'], $this->settings['logfile']);
 			if (!$this->databaseConnection->connection) {
 				$this->databaseConnection = NULL;
 				$this->mainHtml = $this->error ('No valid database connection was supplied.');
