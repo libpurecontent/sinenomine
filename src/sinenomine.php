@@ -69,6 +69,7 @@ class sinenomine
 		'autoLogoutTime' => 1800,	// Number of seconds after which automatic logout will take place
 		'database' => false,
 		'table' => false,
+		'schema' => 'public',	// Default PostgreSQL schema
 		'tableUrlMoniker' => false,	// When forcing a table, enables a URL moniker instead of the table name itself
 		'record' => false,	// Force to a specific record ID
 		'administrators' => array (),	// List of administrators
@@ -903,7 +904,9 @@ class sinenomine
 		if ($data) {
 			$this->data = $data;
 		} else {
-			$query = 'SELECT ' . ($fullView ? '*' : $this->key) . " FROM {$this->quote}{$this->database}{$this->quote}.{$this->quote}{$this->table}{$this->quote} {$constraintsSql} ORDER BY {$orderBySql}{$paginationSql};";
+			$dataPool = $this->database;
+			if ($this->settings['vendor'] == 'pgsql') {$dataPool = $this->settings['schema'];}	// PostgreSQL does not support cross-database queries, but can use the schema instead
+			$query = 'SELECT ' . ($fullView ? '*' : $this->key) . " FROM {$this->quote}{$dataPool}{$this->quote}.{$this->quote}{$this->table}{$this->quote} {$constraintsSql} ORDER BY {$orderBySql}{$paginationSql};";
 			$this->data = $this->databaseConnection->getData ($query, "{$this->database}.{$this->table}");
 		}
 		$visibleRecords = count ($this->data);
