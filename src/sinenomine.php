@@ -1478,7 +1478,10 @@ class sinenomine
 		# Insert/update the record
 		$databaseAction = ($action == 'edit' ? 'update' : 'insert');
 		$parameterFour = ($databaseAction == 'update' ? array ($this->key => $this->record) : NULL);
-		if (!$result = $this->databaseConnection->$databaseAction ($this->database, $this->table, $record, $parameterFour)) {
+		$dataPool = $this->database;
+		if ($this->settings['vendor'] == 'pgsql') {$dataPool = $this->settings['schema'];}	// PostgreSQL does not support cross-database queries, but can use the schema instead
+		if (!$result = $this->databaseConnection->$databaseAction ($dataPool, $this->table, $record, $parameterFour)) {
+			var_dump ($this->databaseConnection->error ());
 			return $html .= $this->error ();
 		}
 		
