@@ -761,7 +761,7 @@ class sinenomine
 			} else {
 				# Show the number of records in the table if wanted
 				#!# Ideally the bracketed section would have a span round it for styling
-				$total = ((is_array ($tables) && $listingsShowTotals) ? ' (' . $this->databaseConnection->getTotal ($databases, $item) . ')' : false);
+				$total = ((is_array ($tables) && $listingsShowTotals) ? ' (' . number_format ($this->databaseConnection->getTotal ($databases, $item)) . ')' : false);
 				
 				$class  = ($item == $this->table ? 'current' : false);
 				if ($this->settings['highlightMainTable'] && ($item == $this->database)) {$class .= ($class ? ' ' : '') . 'maintable';}
@@ -1077,7 +1077,7 @@ class sinenomine
 		$totalFields = count ($this->fields);
 		if (!$data) {	// Do not add text when data has been pre-supplied
 			if (!$this->settings['hideTableIntroduction']) {
-				$html .= "\n<p>This table, " . $this->createLink ($this->database) . ".{$this->tableEntities}, contains a total of <strong>" . ($totalRecords == 1 ? 'one record' : "{$totalRecords} records") . '</strong> (each with ' . ($totalFields == 1 ? 'one field' : "{$totalFields} fields") . ($totalFields != $totalFieldsUnfiltered ? ' shown' : '') . '), ' . ($allRecords ? 'with <strong>' . ($totalRecords == 1 ? 'this record' : 'all records') : 'of which <strong>' . ($visibleRecords == 1 ? 'one record is' : "{$visibleRecords} records are")) . ' listed below</strong>. You can switch to ' . ($fullView ? $this->createLink ($this->database, $this->table, NULL, 'listing', 'quick index', 'action button quicklist') . ' mode.' : $this->createLink ($this->database, $this->table, NULL, NULL, 'full-entry view', 'action button list') . ' (default) mode.') . '</p>';
+				$html .= "\n<p>This table, " . $this->createLink ($this->database) . ".{$this->tableEntities}, contains a total of <strong>" . ($totalRecords == 1 ? 'one record' : number_format ($totalRecords) . ' records') . '</strong> (each with ' . ($totalFields == 1 ? 'one field' : "{$totalFields} fields") . ($totalFields != $totalFieldsUnfiltered ? ' shown' : '') . '), ' . ($allRecords ? 'with <strong>' . ($totalRecords == 1 ? 'this record' : 'all records') : 'of which <strong>' . ($visibleRecords == 1 ? 'one record is' : number_format ($visibleRecords) . ' records are')) . ' listed below</strong>. You can switch to ' . ($fullView ? $this->createLink ($this->database, $this->table, NULL, 'listing', 'quick index', 'action button quicklist') . ' mode.' : $this->createLink ($this->database, $this->table, NULL, NULL, 'full-entry view', 'action button list') . ' (default) mode.') . '</p>';
 			}
 			if (!$this->settings['hideSearchBox']) {
 				$html .= $this->searchBox (false);
@@ -1481,7 +1481,7 @@ class sinenomine
 		$dataPool = $this->database;
 		if ($this->settings['vendor'] == 'pgsql') {$dataPool = $this->settings['schema'];}	// PostgreSQL does not support cross-database queries, but can use the schema instead
 		if (!$result = $this->databaseConnection->$databaseAction ($dataPool, $this->table, $record, $parameterFour)) {
-			var_dump ($this->databaseConnection->error ());
+			//var_dump ($this->databaseConnection->error ());
 			return $html .= $this->error ();
 		}
 		
