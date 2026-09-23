@@ -523,7 +523,7 @@ class sinenomine
 		$this->tables = $this->databaseConnection->getTables ($this->database);
 		
 		# Get the table comments
-		$this->tableComments = $this->getTableComments ($this->database);
+		$this->tableComments = $this->databaseConnection->getTableComments ($this->database);
 		
 		# Make a list of denied tables in this database and remove them from the list of available tables
 		$deniedTables = array ();
@@ -1715,24 +1715,6 @@ class sinenomine
 	{
 		# Return the value
 		return $this->record;
-	}
-	
-	
-	# Function to get table comments (descriptions)
-	private function getTableComments ($database)
-	{
-		# Get the data
-		$query = "SHOW TABLE STATUS FROM {$this->quote}{$this->database}{$this->quote}";
-		$data = $this->databaseConnection->getData ($query);
-		
-		# Arrange as an associative array
-		$comments = array ();
-		foreach ($data as $table) {
-			$comments[$table['Name']] = $table['Comment'];
-		}
-		
-		# Return the comments
-		return $comments;
 	}
 	
 	
