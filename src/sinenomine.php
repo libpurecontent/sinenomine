@@ -1982,7 +1982,9 @@ class sinenomine
 		}
 		
 		# Delete the record and confirm success
-		if (!$this->databaseConnection->delete ($this->database, $this->table, array ($this->key => $this->record))) {
+		$dataPool = $this->database;
+		if ($this->settings['vendor'] == 'pgsql') {$dataPool = $this->settings['schema'];}	// PostgreSQL does not support cross-database queries, but can use the schema instead
+		if (!$this->databaseConnection->delete ($dataPool, $this->table, array ($this->key => $this->record))) {
 			return $html .= $this->error ();
 		}
 		$html .= "<p>The record <em>{$this->recordEntities}</em> in the table " . $this->createLink ($this->database, $this->table, NULL, NULL, NULL, 'action button list') . ' has been deleted.</p>';
