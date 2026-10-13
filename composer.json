@@ -11,7 +11,7 @@
     ],
     "require": {
         "libpurecontent/application": "^1.10",
-        "libpurecontent/database": "^4.4",
+        "libpurecontent/database": "4.5",
         "libpurecontent/ultimateform": "^1.31",
         "libpurecontent/timedate": "^1.4",
         "libpurecontent/pagination": "^1.1"

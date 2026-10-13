@@ -608,7 +608,7 @@ class sinenomine
 		$this->joins = array ();
 		foreach ($this->fields as $fieldname => $fieldAttributes) {
 			$simpleJoin = ($this->settings['simpleJoin'] ? array ($this->database, $this->table, $this->tables) : false);
-			if ($matches = database::convertJoin ($fieldAttributes['Field'], $simpleJoin)) {
+			if ($matches = $this->databaseConnection->convertJoin ($fieldAttributes['Field'], $simpleJoin)) {
 				$this->joins[$fieldname] = $matches;
 				$this->fields[$fieldname]['_field'] = $matches['field'];
 				$this->fields[$fieldname]['_targetDatabase'] = $matches['database'];
@@ -1425,7 +1425,7 @@ class sinenomine
 			'database' => $this->database,
 			'table' => $this->table,
 			'data' => $data,
-			'lookupFunction' => array ('database', 'lookup'),
+			'lookupFunction' => array ($this->databaseConnection, 'lookup'),
 			'simpleJoin' => $this->settings['simpleJoin'],
 			'lookupFunctionParameters' => $this->settings['lookupFunctionParameters'],
 			'lookupFunctionAppendTemplate' => "<a href=\"{$this->baseUrl}/" . ($this->includeDatabaseUrlPart ? '%database/' : '') . "%table/\" class=\"noarrow\" tabindex=\"998\" title=\"Click here to open a new window for editing these values; then click on refresh.\" target=\"_blank\"> ...</a>%refreshtabindex999",
@@ -1794,7 +1794,7 @@ class sinenomine
 				foreach ($fields as $field => $attributes) {
 					
 					# If a join is found, add it to the list
-					if ($join = database::convertJoin ($field, $simpleJoin)) {
+					if ($join = $this->databaseConnection->convertJoin ($field, $simpleJoin)) {
 						if (($this->database == $join['database']) && ($this->table == $join['table'])) {
 							$joins[$database][$table][$field] = true;
 							
@@ -2111,7 +2111,7 @@ class sinenomine
 				foreach ($fields as $field) {
 					
 					# Construct HTML for the joins if one exists
-					$join = database::convertJoin ($field['Field'], $simpleJoin);
+					$join = $this->databaseConnection->convertJoin ($field['Field'], $simpleJoin);
 					$joinedToHtml = ($join ? ('&nbsp;&nbsp;(joined to <a href="#' . htmlspecialchars ("{$join['database']}.{$join['table']}") . '">' . htmlspecialchars ("{$join['database']}.{$join['table']}") . '</a>)') : '');
 					
 					# Construct HTML showing the collation
@@ -2183,7 +2183,7 @@ class sinenomine
 		if ($joins === false) {
 			foreach ($fields as $fieldname => $fieldAttributes) {
 				$simpleJoin = ($this->settings['simpleJoin'] ? array ($this->database, $this->table, $this->tables) : false);
-				if ($matches = database::convertJoin ($fieldAttributes['Field'], $simpleJoin)) {
+				if ($matches = $this->databaseConnection->convertJoin ($fieldAttributes['Field'], $simpleJoin)) {
 					$joins[$fieldname] = $matches;
 				}
 			}
