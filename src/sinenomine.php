@@ -146,6 +146,7 @@ class sinenomine
 		'submitButtonPosition' => 'both',
 		'callback'	=> array (),	// Whether to register a callback class+method for a specific database/table/action, specified as a nested array
 		'constraint' => array (),	// Whether to register an SQL extract constraint for a specific database/table/action, specified as a nested array
+		'ordering' => array (),		// Field ordering, nested by database/table
 		'moveDeleteToEnd' => false,	// Whether to show the Delete link in the index view at the end (defaults to showing alongside the Edit/Clone buttons)
 		'truncateValues' => false,	// In table display mode, whether to truncate values in the main data table, and if so by how many characters
 		'autofocus' => false,
@@ -1429,8 +1430,10 @@ class sinenomine
 			'simpleJoin' => $this->settings['simpleJoin'],
 			'lookupFunctionParameters' => $this->settings['lookupFunctionParameters'],
 			'lookupFunctionAppendTemplate' => "<a href=\"{$this->baseUrl}/" . ($this->includeDatabaseUrlPart ? '%database/' : '') . "%table/\" class=\"noarrow\" tabindex=\"998\" title=\"Click here to open a new window for editing these values; then click on refresh.\" target=\"_blank\"> ...</a>%refreshtabindex999",
+			#!# Buggy - in some circumstances is $this->settings['includeOnly']
 			'includeOnly' => $this->includeOnly,
 			'exclude' => $this->settings['exclude'],
+			'ordering' => (isSet ($this->settings['ordering'][$this->database]) && isSet ($this->settings['ordering'][$this->database][$this->table]) ? $this->settings['ordering'][$this->database][$this->table] : array ()),
 			'attributes' => $attributes,
 			'intelligence' => $this->settings['intelligence'],
 			'int1ToCheckbox' => $this->settings['int1ToCheckbox'],
