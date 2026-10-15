@@ -110,6 +110,7 @@ class sinenomine
 		'datePicker' => false,	// ultimateForm defaults
 		'int1ToCheckbox' => false,
 		'unsavedDataProtection' => true,
+		'foreignKeys' => false,	// Enable foreign keys support rather than simpleJoin or legacy __JOIN__ naming format
 		'simpleJoin' => false,
 		'lookupFunctionParameters' => array (),
 		'refreshSeconds' => 0,	// Refresh time in seconds after editing an article
@@ -1428,6 +1429,7 @@ class sinenomine
 			'data' => $data,
 			'lookupFunction' => array ($this->databaseConnection, 'lookup'),
 			'simpleJoin' => $this->settings['simpleJoin'],
+			'foreignKeys' => $this->settings['foreignKeys'],
 			'lookupFunctionParameters' => $this->settings['lookupFunctionParameters'],
 			'lookupFunctionAppendTemplate' => "<a href=\"{$this->baseUrl}/" . ($this->includeDatabaseUrlPart ? '%database/' : '') . "%table/\" class=\"noarrow\" tabindex=\"998\" title=\"Click here to open a new window for editing these values; then click on refresh.\" target=\"_blank\"> ...</a>%refreshtabindex999",
 			#!# Buggy - in some circumstances is $this->settings['includeOnly']
