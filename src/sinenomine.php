@@ -1636,7 +1636,7 @@ class sinenomine
 					
 				# Sets
 				case (preg_match ('/^(set)/i', $attributes['Type'])):
-					$matchesSql[$field] = "FIND_IN_SET('{$searchPhraseEscaped}',{$field}) > 0";
+					$matchesSql[$field] = "FIND_IN_SET('{$searchPhraseEscaped}', {$this->quote}{$field}{$this->quote}) > 0";
 					break;
 					
 				# Floating-point numbers
