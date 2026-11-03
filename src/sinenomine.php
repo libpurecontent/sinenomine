@@ -1603,51 +1603,55 @@ class sinenomine
 	
 	
 	# Function to provide search results
-	#!# Convert all this to prepared statements
 	private function searchResults ($searchPhrase)
 	{
-		# Escape the query for use in the SQL
-		$searchPhraseEscaped = $this->databaseConnection->escape ($searchPhrase);
-		
 		# Construct field match extracts; see also ultimateForm.php:dataBinding() which contains some useful pointers
 		$matchesSql = array ();
+		$preparedStatementValues = array ();
 		foreach ($this->fields as $field => $attributes) {
 			switch (true) {
 				
 				# VARCHAR text
 				case (preg_match ('/^(char|varchar)/i', $attributes['Type'])):
-					$matchesSql[$field] = "{$this->quote}{$field}{$this->quote} LIKE '%{$searchPhraseEscaped}%'";
+					$matchesSql[$field] = "{$this->quote}{$field}{$this->quote} LIKE :searchPhraseLike";
+					$preparedStatementValues['searchPhraseLike'] = '%' . $searchPhrase . '%';
 					break;
 					
 				# Full-text
 				/*
 				case (preg_match ('/^(text|mediumtext|blob)/i', $attributes['Type'])):
-					$matchesSql[$field] = "MATCH({$field}) AGAINST ('{$searchPhraseEscaped}')";
+					$matchesSql[$field] = "MATCH({$field}) AGAINST (:searchPhrase)";
+					$preparedStatementValues['searchPhrase'] = $searchPhrase;
 					break;
 				*/
 				case (preg_match ('/^(text|mediumtext)/i', $attributes['Type'])):
-					$matchesSql[$field] = "{$this->quote}{$field}{$this->quote} LIKE '%{$searchPhraseEscaped}%'";
+					$matchesSql[$field] = "{$this->quote}{$field}{$this->quote} LIKE :searchPhraseLike";
+					$preparedStatementValues['searchPhraseLike'] = '%' . $searchPhrase . '%';
 					break;
 					
 				# Enumerated list
 				case (preg_match ('/^(enum)/i', $attributes['Type'])):
-					$matchesSql[$field] = "{$this->quote}{$field}{$this->quote} = '{$searchPhraseEscaped}'";
+					$matchesSql[$field] = "{$this->quote}{$field}{$this->quote} = :searchPhrase";
+					$preparedStatementValues['searchPhrase'] = $searchPhrase;
 					break;
 					
 				# Sets
 				case (preg_match ('/^(set)/i', $attributes['Type'])):
-					$matchesSql[$field] = "FIND_IN_SET('{$searchPhraseEscaped}', {$this->quote}{$field}{$this->quote}) > 0";
+					$matchesSql[$field] = "FIND_IN_SET(:searchPhrase, {$this->quote}{$field}{$this->quote}) > 0";
+					$preparedStatementValues['searchPhrase'] = $searchPhrase;
 					break;
 					
 				# Floating-point numbers
 				case (preg_match ('/^(float)/i', $attributes['Type']) && is_numeric ($searchPhrase)):
-					$matchesSql[$field] = "{$this->quote}{$field}{$this->quote} = '{$searchPhraseEscaped}'";
+					$matchesSql[$field] = "{$this->quote}{$field}{$this->quote} = :searchPhrase";
+					$preparedStatementValues['searchPhrase'] = $searchPhrase;
 					break;
 					
 				# Integer types, including years
 				#!# Doesn't yet support negative integers; cannot use is_int as will never match what is an incoming string
 				case (preg_match ('/^(int|tinyint|smallint|mediumint|bigint|year)/i', $attributes['Type']) && ctype_digit ($searchPhrase)):
-					$matchesSql[$field] = "{$this->quote}{$field}{$this->quote} = '{$searchPhraseEscaped}'";
+					$matchesSql[$field] = "{$this->quote}{$field}{$this->quote} = :searchPhrase";
+					$preparedStatementValues['searchPhrase'] = $searchPhrase;
 					break;
 					
 				# Dates
@@ -1673,7 +1677,7 @@ class sinenomine
 		$query = "SELECT * FROM {$this->database}.{$this->table} WHERE {$matchesSql};";
 		
 		# Get the data
-		if (!$data = $this->databaseConnection->getData ($query, "{$this->database}.{$this->table}")) {
+		if (!$data = $this->databaseConnection->getData ($query, "{$this->database}.{$this->table}", true, $preparedStatementValues)) {
 			$html = "<p>\nSorry, no items were found.</p>";
 			$html .= "\n<p>Do you want to " . $this->createLink ($this->database, $this->table, NULL, 'add', 'add a record', 'action button add') . '?</p>';
 		} else {
