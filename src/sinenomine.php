@@ -991,8 +991,7 @@ class sinenomine
 			if ($this->settings['showViewLink']) {
 				$table[$key]['View'] = $this->createLink ($this->database, $this->table, $key, NULL, 'View', 'action view');
 			}
-//			$actions = array ('edit', 'clone', 'delete');
-			$actions = array ('edit', 'delete');
+			$actions = array ('edit', 'clone', 'delete');
 			foreach ($actions as $action) {
 				$title = ucfirst ($action);
 				$table[$key][$title] = $this->createLink ($this->database, $this->table, $key, $action, ucfirst ($action), "action {$action}");
