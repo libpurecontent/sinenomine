@@ -149,6 +149,7 @@ class sinenomine
 		'constraint' => array (),	// Whether to register an SQL extract constraint for a specific database/table/action, specified as a nested array
 		'ordering' => array (),		// Field ordering, nested by database/table
 		'moveDeleteToEnd' => false,	// Whether to show the Delete link in the index view at the end (defaults to showing alongside the Edit/Clone buttons)
+		'disableDeletion' => false,	// Whether to disable deletion of records, either all tables (true) or an array nested by database/table
 		'truncateValues' => false,	// In table display mode, whether to truncate values in the main data table, and if so by how many characters
 		'autofocus' => false,
 	);
@@ -937,7 +938,10 @@ class sinenomine
 		$this->data = application::booleansToTicks ($this->data, $this->fields);
 		
 		# Define available record actions
-		$actions = array ('edit', 'clone', 'delete');
+		$actions = array ('edit', 'clone');
+		if ($this->deletionEnabled ($this->database, $this->table)) {
+			$actions[] = 'delete';
+		}
 		
 		# Start a table, adding in metadata in full-view mode
 		$table = array ();
@@ -1110,6 +1114,28 @@ class sinenomine
 		
 		# Show the table
 		return $html;
+	}
+	
+	
+	# Function to check if record deletion is enabled for a particular database/table
+	private function deletionEnabled ($database, $table)
+	{
+		# Global disabling
+		if ($this->settings['disableDeletion'] === true) {	// Exact-equals check
+			return false;
+		}
+		
+		# Database/table-specific disabling, e.g. array ('mydatabase' => array ('table1', 'table2')) disables for mydatabase.table1 and mydatabase.table2
+		if (is_array ($this->settings['disableDeletion'])) {
+			if (isSet ($this->settings['disableDeletion'][$this->database])) {
+				if (in_array ($this->table, $this->settings['disableDeletion'][$this->database])) {
+					return false;
+				}
+			}
+		}
+		
+		# No restriction
+		return true;
 	}
 	
 	
@@ -1947,6 +1973,12 @@ class sinenomine
 	{
 		# Start the HTML
 		$html = '';
+		
+		# End if not enabled
+		if (!$this->deletionEnabled ($this->database, $this->table)) {
+			$html .= "\n<p>Deletion of records is not permitted for this table.</p>";
+			return $html;
+		}
 		
 		#!# Lookup delete rights
 		
