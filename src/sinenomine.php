@@ -936,6 +936,9 @@ class sinenomine
 		# Convert booleans to ticks
 		$this->data = application::booleansToTicks ($this->data, $this->fields);
 		
+		# Define available record actions
+		$actions = array ('edit', 'clone', 'delete');
+		
 		# Start a table, adding in metadata in full-view mode
 		$table = array ();
 		
@@ -961,7 +964,8 @@ class sinenomine
 				# Skip join fields
 				if (preg_match ('/^_/', $metadataField)) {continue;}
 				
-				$table[$metadataField] = array ($metadataField . ':', '', '', '',); // Placeholders against the starting Record/View/edit/clone/delete link headings
+				$emptyCellsStart = array_fill (0, count ($actions), '');
+				$table[$metadataField] = array_merge (array ($metadataField . ':'), $emptyCellsStart); // Placeholders against the starting Record/View/edit/clone/delete link headings
 				if ($this->settings['showViewLink']) {$table[$metadataField][] = '';}
 				foreach ($this->fields as $fieldname => $attributes) {
 					
@@ -991,7 +995,6 @@ class sinenomine
 			if ($this->settings['showViewLink']) {
 				$table[$key]['View'] = $this->createLink ($this->database, $this->table, $key, NULL, 'View', 'action view');
 			}
-			$actions = array ('edit', 'clone', 'delete');
 			foreach ($actions as $action) {
 				$title = ucfirst ($action);
 				$table[$key][$title] = $this->createLink ($this->database, $this->table, $key, $action, ucfirst ($action), "action {$action}");
