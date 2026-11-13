@@ -25,6 +25,7 @@ class sinenomine
 	private $data = NULL;	// The data that can be retrieved from >process ()
 	private $key = false;
 	private $quote;
+	private $schemaToken;
 	private $html = '';
 	private $mainHtml = '';
 	private $includeOnly = array ();
@@ -313,6 +314,9 @@ class sinenomine
 		
 		# Set quote style
 		$this->quote = ($this->settings['vendor'] == 'mysql' ? '`' : '"');
+
+		# Set schema token if needed, e.g. for PostgreSQL, this will turn `SELECT * FROM database.table` into `SELECT * FROM database.schema.table` in appropriate cases
+		$this->schemaToken = ($this->settings['vendor'] == 'pgsql' ? "{$this->quote}{$this->settings['schema']}{$this->quote}." : '');
 	}
 	
 	
@@ -907,9 +911,7 @@ class sinenomine
 		if ($data) {
 			$this->data = $data;
 		} else {
-			$dataPool = $this->database;
-			if ($this->settings['vendor'] == 'pgsql') {$dataPool = $this->settings['schema'];}	// PostgreSQL does not support cross-database queries, but can use the schema instead
-			$query = 'SELECT ' . ($fullView ? '*' : $this->key) . " FROM {$this->quote}{$dataPool}{$this->quote}.{$this->quote}{$this->table}{$this->quote} {$constraintsSql} ORDER BY {$orderBySql}{$paginationSql};";
+			$query = 'SELECT ' . ($fullView ? '*' : $this->key) . " FROM {$this->quote}{$this->database}{$this->quote}.{$this->schemaToken}{$this->quote}{$this->table}{$this->quote} {$constraintsSql} ORDER BY {$orderBySql}{$paginationSql};";
 			$this->data = $this->databaseConnection->getData ($query, "{$this->database}.{$this->table}");
 		}
 		$visibleRecords = count ($this->data);
@@ -1250,7 +1252,7 @@ class sinenomine
 		ob_get_clean ();
 		
 		# Export the data
-		$query = "SELECT * FROM {$this->database}.{$this->table};";
+		$query = "SELECT * FROM {$this->database}.{$this->schemaToken}{$this->table};";
 		$this->databaseConnection->serveCsv ($query, array (), $this->table);
 		
 		# End
@@ -1511,9 +1513,7 @@ class sinenomine
 		# Insert/update the record
 		$databaseAction = ($action == 'edit' ? 'update' : 'insert');
 		$parameterFour = ($databaseAction == 'update' ? array ($this->key => $this->record) : NULL);
-		$dataPool = $this->database;
-		if ($this->settings['vendor'] == 'pgsql') {$dataPool = $this->settings['schema'];}	// PostgreSQL does not support cross-database queries, but can use the schema instead
-		if (!$result = $this->databaseConnection->$databaseAction ($dataPool, $this->table, $record, $parameterFour)) {
+		if (!$result = $this->databaseConnection->$databaseAction ($this->database, $this->table, $record, $parameterFour)) {
 			//var_dump ($this->databaseConnection->error ());
 			return $html .= $this->error ();
 		}
@@ -1702,7 +1702,7 @@ class sinenomine
 		
 		# Construct a query
 		#!# Currently doesn't support joins
-		$query = "SELECT * FROM {$this->database}.{$this->table} WHERE {$matchesSql};";
+		$query = "SELECT * FROM {$this->database}.{$this->schemaToken}{$this->table} WHERE {$matchesSql};";
 		
 		# Get the data
 		if (!$data = $this->databaseConnection->getData ($query, "{$this->database}.{$this->table}", true, $preparedStatementValues)) {
@@ -1739,7 +1739,7 @@ class sinenomine
 		$where = ' WHERE (' . implode (' AND ', $where) . ')';
 		
 		# Get the current values (often the list of keys)
-		$query = "SELECT {$this->quote}{$field}{$this->quote} FROM {$this->database}.{$this->table}{$where} ORDER BY {$this->quote}{$field}{$this->quote}";
+		$query = "SELECT {$this->quote}{$field}{$this->quote} FROM {$this->database}.{$this->schemaToken}{$this->table}{$where} ORDER BY {$this->quote}{$field}{$this->quote}";
 		$values = $this->databaseConnection->getPairs ($query, false, $preparedStatementValues);
 		
 		# Return the values (often the list of keys)
@@ -2025,9 +2025,7 @@ class sinenomine
 		}
 		
 		# Delete the record and confirm success
-		$dataPool = $this->database;
-		if ($this->settings['vendor'] == 'pgsql') {$dataPool = $this->settings['schema'];}	// PostgreSQL does not support cross-database queries, but can use the schema instead
-		if (!$this->databaseConnection->delete ($dataPool, $this->table, array ($this->key => $this->record))) {
+		if (!$this->databaseConnection->delete ($this->database, $this->table, array ($this->key => $this->record))) {
 			return $html .= $this->error ();
 		}
 		$html .= "<p>The record <em>{$this->recordEntities}</em> in the table " . $this->createLink ($this->database, $this->table, NULL, NULL, NULL, 'action button list') . ' has been deleted.</p>';
@@ -2080,7 +2078,7 @@ class sinenomine
 								
 								# Get the highest (max) record for this
 								// $query = "SELECT {$this->quote}{$fieldname}{$this->quote} AS highest FROM {$this->quote}{$database}{$this->quote}.{$this->quote}{$table}{$this->quote} ORDER BY {$this->quote}{$fieldname}{$this->quote} DESC LIMIT 1;";
-								$query = "SELECT MAX({$this->quote}{$fieldname}{$this->quote}) AS highest FROM {$this->quote}{$database}{$this->quote}.{$this->quote}{$table}{$this->quote};";
+								$query = "SELECT MAX({$this->quote}{$fieldname}{$this->quote}) AS highest FROM {$this->quote}{$database}{$this->quote}.{$this->schemaToken}{$this->quote}{$table}{$this->quote};";
 								$data = $this->databaseConnection->getOne ($query);
 								$highest = $data['highest'];
 								
@@ -2273,7 +2271,7 @@ class sinenomine
 			}
 			
 			# Get the data
-			$query = "SELECT * FROM {$this->quote}{$joins[$field]['database']}{$this->quote}.{$this->quote}{$joins[$field]['table']}{$this->quote} WHERE {$this->quote}{$uniqueField}{$this->quote} REGEXP '(^" . implode ('|', $values) . "$)';";
+			$query = "SELECT * FROM {$this->quote}{$joins[$field]['database']}{$this->quote}.{$this->schemaToken}{$this->quote}{$joins[$field]['table']}{$this->quote} WHERE {$this->quote}{$uniqueField}{$this->quote} REGEXP '(^" . implode ('|', $values) . "$)';";
 			$tempData = $this->databaseConnection->getData ($query, "{$joins[$field]['database']}.{$joins[$field]['table']}");
 			
 			# Loop through each data set and convert each record
